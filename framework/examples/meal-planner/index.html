@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Family Meal Planner - Plan weekly meals for your family">
+  <title>Meal Planner - Local First</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#059669">
+  
+  <!-- iOS PWA Support -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Meal Planner">
+  
+  <style>
+    #toast-container {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 9999;
+    }
+    
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9998;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    
+    .modal-backdrop.show {
+      opacity: 1;
+    }
+    
+    .modal-dialog {
+      background: white;
+      border-radius: 0.5rem;
+      max-width: 500px;
+      width: 90%;
+      max-height: 90vh;
+      overflow-y: auto;
+      transform: scale(0.9);
+      transition: transform 0.3s ease;
+    }
+    
+    .modal-backdrop.show .modal-dialog {
+      transform: scale(1);
+    }
+    
+    .modal-header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .modal-body {
+      padding: 1.5rem;
+    }
+    
+    .modal-footer {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+    }
+    
+    .meal-slot {
+      min-height: 60px;
+      transition: all 0.2s ease;
+    }
+    
+    .meal-slot:hover {
+      background-color: #f0fdf4;
+    }
+    
+    .day-column {
+      min-width: 140px;
+    }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
+  
+  <!-- Header -->
+  <header class="bg-emerald-600 text-white shadow-lg">
+    <div class="max-w-7xl mx-auto px-4 py-4">
+      <div class="flex justify-between items-center">
+        <div>
+          <h1 class="text-2xl font-bold">🍽️ Meal Planner</h1>
+          <p class="text-emerald-100 text-sm">Plan your family's weekly meals</p>
+        </div>
+        <div class="flex items-center space-x-3">
+          <span id="sync-status" class="text-sm text-emerald-200">●</span>
+          <button onclick="manualSync()" class="px-4 py-2 bg-emerald-700 rounded-md hover:bg-emerald-800 text-sm">
+            Sync
+          </button>
+          <button onclick="showSettings()" class="p-2 hover:bg-emerald-700 rounded-full">
+            ⚙️
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="max-w-7xl mx-auto px-4 py-6">
+    <!-- Week Navigation -->
+    <div class="flex justify-between items-center mb-6">
+      <button onclick="previousWeek()" class="px-4 py-2 bg-white rounded-md shadow hover:bg-gray-50">
+        ← Previous
+      </button>
+      <h2 id="week-display" class="text-xl font-semibold text-gray-800"></h2>
+      <button onclick="nextWeek()" class="px-4 py-2 bg-white rounded-md shadow hover:bg-gray-50">
+        Next →
+      </button>
+    </div>
+    
+    <!-- Meal Grid -->
+    <div class="bg-white rounded-lg shadow overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr class="bg-emerald-50">
+            <th class="p-3 text-left text-sm font-semibold text-gray-700 border-b">Meal</th>
+            <th id="day-0" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
+            <th id="day-1" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
+            <th id="day-2" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
+            <th id="day-3" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
+            <th id="day-4" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
+            <th id="day-5" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
+            <th id="day-6" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
+          </tr>
+        </thead>
+        <tbody id="meal-grid">
+          <!-- Populated by JavaScript -->
+        </tbody>
+      </table>
+    </div>
+    
+    <!-- Quick Stats -->
+    <div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="bg-white rounded-lg shadow p-4">
+        <h3 class="text-sm font-medium text-gray-500">Meals Planned</h3>
+        <p id="stat-planned" class="text-2xl font-bold text-emerald-600">0</p>
+      </div>
+      <div class="bg-white rounded-lg shadow p-4">
+        <h3 class="text-sm font-medium text-gray-500">Unique Recipes</h3>
+        <p id="stat-recipes" class="text-2xl font-bold text-emerald-600">0</p>
+      </div>
+      <div class="bg-white rounded-lg shadow p-4">
+        <h3 class="text-sm font-medium text-gray-500">Shopping List Items</h3>
+        <p id="stat-shopping" class="text-2xl font-bold text-emerald-600">0</p>
+        <button onclick="showShoppingList()" class="mt-2 text-sm text-emerald-600 hover:text-emerald-800">View List →</button>
+      </div>
+    </div>
+    
+    <!-- Favorite Meals -->
+    <div class="mt-6 bg-white rounded-lg shadow p-4">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">⭐ Favorite Meals</h3>
+        <button onclick="showAddFavorite()" class="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-md hover:bg-emerald-200 text-sm">
+          + Add Favorite
+        </button>
+      </div>
+      <div id="favorites-container" class="flex flex-wrap gap-2">
+        <!-- Populated by JavaScript -->
+      </div>
+    </div>
+  </main>
+
+  <!-- Framework Scripts -->
+  <script src="../../core/github-sync.js"></script>
+  <script src="../../core/local-storage.js"></script>
+  <script src="../../core/sync-controller.js"></script>
+  <script src="../../core/router.js"></script>
+  <script src="../../core/state.js"></script>
+  <script src="../../core/components/toast.js"></script>
+  <script src="../../core/components/modal.js"></script>
+  <script src="../../core/components/form.js"></script>
+  <script src="../../core/components/list.js"></script>
+  
+  <!-- App Script -->
+  <script src="app.js"></script>
+  
+  <!-- Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+          .catch(err => console.log('Service Worker registration failed', err));
+      });
+    }
+  </script>
+  
+</body>
+</html>

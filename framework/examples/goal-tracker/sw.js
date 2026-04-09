@@ -2,7 +2,7 @@
  * Service Worker for offline functionality
  */
 
-const CACHE_NAME = 'reading-log-v5';
+const CACHE_NAME = 'goal-tracker-v1';
 const URLS_TO_CACHE = [
   'index.html',
   'app.js',
@@ -25,19 +25,16 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.match(event.request)
       .then((response) => {
-        // Cache hit - return response
         if (response) {
           return response;
         }
         
         return fetch(event.request).then(
           (response) => {
-            // Check if valid response
             if (!response || response.status !== 200 || response.type !== 'basic') {
               return response;
             }
 
-            // Clone the response
             const responseToCache = response.clone();
 
             caches.open(CACHE_NAME)

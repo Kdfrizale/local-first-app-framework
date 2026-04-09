@@ -267,6 +267,38 @@ class LocalStorage {
     localStorage.removeItem(this.settingsKey);
   }
 
+  // Shared/Global settings (same across all apps)
+  static SHARED_SETTINGS_KEY = 'localfirst-shared-settings';
+
+  /**
+   * Save shared setting (shared across all apps)
+   * @param {string} key - Setting key
+   * @param {any} value - Setting value
+   */
+  saveSharedSetting(key, value) {
+    const settings = this.loadSharedSettings();
+    settings[key] = value;
+    localStorage.setItem(LocalStorage.SHARED_SETTINGS_KEY, JSON.stringify(settings));
+  }
+
+  /**
+   * Load shared setting
+   * @param {string} key - Setting key
+   * @param {any} defaultValue - Default if not found
+   */
+  loadSharedSetting(key, defaultValue = null) {
+    const settings = this.loadSharedSettings();
+    return settings[key] !== undefined ? settings[key] : defaultValue;
+  }
+
+  /**
+   * Load all shared settings
+   */
+  loadSharedSettings() {
+    const settingsStr = localStorage.getItem(LocalStorage.SHARED_SETTINGS_KEY);
+    return settingsStr ? JSON.parse(settingsStr) : {};
+  }
+
   // LocalStorage fallback methods
 
   _saveToLocalStorage(key, data, metadata) {
