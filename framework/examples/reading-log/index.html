@@ -250,15 +250,15 @@
   </div>
   
   <!-- Framework Core Scripts -->
-  <script src="../../core/github-sync.js?v=1775705721"></script>
-  <script src="../../core/local-storage.js?v=1775705721"></script>
-  <script src="../../core/sync-controller.js?v=1775705721"></script>
-  <script src="../../core/router.js?v=1775705721"></script>
-  <script src="../../core/state.js?v=1775705721"></script>
-  <script src="../../core/components/toast.js?v=1775705721"></script>
-  <script src="../../core/components/modal.js?v=1775705721"></script>
-  <script src="../../core/components/form.js?v=1775705721"></script>
-  <script src="../../core/components/list.js?v=1775705721"></script>
+  <script src="../../core/github-sync.js"></script>
+  <script src="../../core/local-storage.js"></script>
+  <script src="../../core/sync-controller.js"></script>
+  <script src="../../core/router.js"></script>
+  <script src="../../core/state.js"></script>
+  <script src="../../core/components/toast.js"></script>
+  <script src="../../core/components/modal.js"></script>
+  <script src="../../core/components/form.js"></script>
+  <script src="../../core/components/list.js"></script>
   
   <!-- App Script -->
   <script src="app.js"></script>
@@ -280,7 +280,7 @@
       if ('caches' in window) {
         caches.keys().then(names => {
           names.forEach(name => {
-            if (name !== 'reading-log-v5') {
+            if (name !== 'reading-log-v7') {
               caches.delete(name);
             }
           });
