@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitHub API Test</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-8">
+  <div class="max-w-2xl mx-auto">
+    <h1 class="text-3xl font-bold mb-8">GitHub API Connection Test</h1>
+    
+    <div class="bg-white rounded-lg shadow p-6 mb-6">
+      <h2 class="text-xl font-semibold mb-4">Test Configuration</h2>
+      <form id="test-form" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">GitHub Personal Access Token</label>
+          <input type="password" id="token" required 
+                 class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                 placeholder="ghp_xxxxxxxxxxxx" />
+          <p class="text-xs text-gray-500 mt-1">Token must have 'repo' scope</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">GitHub Username</label>
+          <input type="text" id="owner" required 
+                 class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                 placeholder="your-username" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Repository Name</label>
+          <input type="text" id="repo" required 
+                 class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                 placeholder="family-data" />
+        </div>
+        <button type="submit" 
+                class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+          Run Tests
+        </button>
+      </form>
+    </div>
+    
+    <div class="bg-white rounded-lg shadow p-6">
+      <h2 class="text-xl font-semibold mb-4">Test Results</h2>
+      <div id="results" class="space-y-3 font-mono text-sm">
+        <p class="text-gray-500">Enter your credentials and click "Run Tests"</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Simple GitHub API test without the framework
+    const results = document.getElementById('results');
+    
+    function log(message, type = 'info') {
+      const colors = {
+        info: 'text-gray-700',
+        success: 'text-green-600',
+        error: 'text-red-600',
+        warning: 'text-yellow-600'
+      };
+      const icons = {
+        info: 'ℹ️',
+        success: '✅',
+        error: '❌',
+        warning: '⚠️'
+      };
+      const p = document.createElement('p');
+      p.className = colors[type];
+      p.innerHTML = `${icons[type]} ${message}`;
+      results.appendChild(p);
+    }
+    
+    function clearResults() {
+      results.innerHTML = '';
+    }
+    
+    async function testGitHubAPI(token, owner, repo) {
+      clearResults();
+      log('Starting GitHub API tests...', 'info');
+      
+      // Test 1: Check token format
+      log('Test 1: Checking token format...', 'info');
+      if (!token.startsWith('ghp_') && !token.startsWith('github_pat_')) {
+        log('Token does not start with "ghp_" or "github_pat_". This may be an invalid token format.', 'warning');
+      } else {
+        log('Token format looks valid', 'success');
+      }
+      
+      // Test 2: Test authentication
+      log('Test 2: Testing authentication...', 'info');
+      try {
+        const authResponse = await fetch('https://api.github.com/user', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+        
+        log(`Auth response status: ${authResponse.status} ${authResponse.statusText}`, 'info');
+        
+        if (authResponse.ok) {
+          const userData = await authResponse.json();
+          log(`Authenticated as: ${userData.login} (${userData.name || 'No name'})`, 'success');
+        } else {
+          const errorData = await authResponse.json().catch(() => ({}));
+          log(`Authentication failed: ${errorData.message || authResponse.statusText}`, 'error');
+          log('Check that your token is valid and not expired', 'warning');
+          return; // Stop if auth fails
+        }
+      } catch (error) {
+        log(`Network error during authentication: ${error.message}`, 'error');
+        return;
+      }
+      
+      // Test 3: Test repository access
+      log('Test 3: Testing repository access...', 'info');
+      try {
+        const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+        
+        log(`Repo response status: ${repoResponse.status} ${repoResponse.statusText}`, 'info');
+        
+        if (repoResponse.ok) {
+          const repoData = await repoResponse.json();
+          log(`Repository found: ${repoData.full_name} (${repoData.private ? 'Private' : 'Public'})`, 'success');
+          log(`Permissions: ${JSON.stringify(repoData.permissions)}`, 'info');
+        } else if (repoResponse.status === 404) {
+          log(`Repository not found: ${owner}/${repo}`, 'error');
+          log('Make sure the repository exists and you have access to it', 'warning');
+          return;
+        } else {
+          const errorData = await repoResponse.json().catch(() => ({}));
+          log(`Repository access failed: ${errorData.message || repoResponse.statusText}`, 'error');
+          return;
+        }
+      } catch (error) {
+        log(`Network error during repo check: ${error.message}`, 'error');
+        return;
+      }
+      
+      // Test 4: Test writing a file
+      log('Test 4: Testing file write (creating test file)...', 'info');
+      const testPath = 'apps/reading-log/test-connection.json';
+      const testContent = { test: true, timestamp: new Date().toISOString() };
+      
+      try {
+        // First check if file exists (to get SHA for update)
+        let existingSha = null;
+        const checkResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${testPath}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+        
+        if (checkResponse.ok) {
+          const existing = await checkResponse.json();
+          existingSha = existing.sha;
+          log(`File exists, will update (SHA: ${existingSha.substring(0, 7)}...)`, 'info');
+        } else if (checkResponse.status === 404) {
+          log('File does not exist, will create new', 'info');
+        }
+        
+        // Now write/update the file
+        const writeBody = {
+          message: 'Test connection from Local-First App',
+          content: btoa(JSON.stringify(testContent, null, 2)),
+          branch: 'main'
+        };
+        
+        if (existingSha) {
+          writeBody.sha = existingSha;
+        }
+        
+        const writeResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${testPath}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(writeBody)
+        });
+        
+        log(`Write response status: ${writeResponse.status} ${writeResponse.statusText}`, 'info');
+        
+        if (writeResponse.ok || writeResponse.status === 201) {
+          const writeData = await writeResponse.json();
+          log(`File written successfully! Commit: ${writeData.commit.sha.substring(0, 7)}`, 'success');
+        } else {
+          const errorData = await writeResponse.json().catch(() => ({}));
+          log(`File write failed: ${errorData.message || writeResponse.statusText}`, 'error');
+          
+          if (writeResponse.status === 422) {
+            log('This might be a SHA mismatch or branch protection issue', 'warning');
+          }
+          return;
+        }
+      } catch (error) {
+        log(`Network error during file write: ${error.message}`, 'error');
+        return;
+      }
+      
+      // Test 5: Test reading the file back
+      log('Test 5: Testing file read...', 'info');
+      try {
+        const readResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${testPath}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+        
+        if (readResponse.ok) {
+          const readData = await readResponse.json();
+          const content = JSON.parse(atob(readData.content));
+          log(`File read successfully! Content: ${JSON.stringify(content)}`, 'success');
+        } else {
+          log(`File read failed: ${readResponse.statusText}`, 'error');
+        }
+      } catch (error) {
+        log(`Network error during file read: ${error.message}`, 'error');
+        return;
+      }
+      
+      log('', 'info');
+      log('🎉 All tests passed! GitHub connection is working correctly.', 'success');
+      log('Your credentials are valid and can read/write to the repository.', 'success');
+    }
+    
+    document.getElementById('test-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const token = document.getElementById('token').value.trim();
+      const owner = document.getElementById('owner').value.trim();
+      const repo = document.getElementById('repo').value.trim();
+      
+      await testGitHubAPI(token, owner, repo);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Local-first app">
+  <title>My App - Local First</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#3B82F6">
+  
+  <!-- iOS PWA Support -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="My App">
+  
+  <style>
+    /* Custom styles for components */
+    
+    /* Toast notifications */
+    #toast-container {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      max-width: 90vw;
+    }
+    
+    .toast {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1rem;
+      background: white;
+      border-radius: 0.5rem;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+      border-left: 4px solid;
+      opacity: 0;
+      transform: translateX(100%);
+      transition: all 0.3s ease;
+      min-width: 300px;
+    }
+    
+    .toast.show {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    
+    .toast-success {
+      border-left-color: #10B981;
+    }
+    
+    .toast-error {
+      border-left-color: #EF4444;
+    }
+    
+    .toast-info {
+      border-left-color: #3B82F6;
+    }
+    
+    .toast-warning {
+      border-left-color: #F59E0B;
+    }
+    
+    .toast-icon {
+      font-size: 1.25rem;
+      font-weight: bold;
+    }
+    
+    .toast-success .toast-icon {
+      color: #10B981;
+    }
+    
+    .toast-error .toast-icon {
+      color: #EF4444;
+    }
+    
+    .toast-info .toast-icon {
+      color: #3B82F6;
+    }
+    
+    .toast-warning .toast-icon {
+      color: #F59E0B;
+    }
+    
+    .toast-message {
+      flex: 1;
+    }
+    
+    .toast-close {
+      background: none;
+      border: none;
+      font-size: 1.5rem;
+      cursor: pointer;
+      color: #6B7280;
+      padding: 0;
+      line-height: 1;
+    }
+    
+    .toast-close:hover {
+      color: #374151;
+    }
+    
+    /* Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9998;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      padding: 1rem;
+    }
+    
+    .modal-backdrop.show {
+      opacity: 1;
+    }
+    
+    .modal-dialog {
+      background: white;
+      border-radius: 0.5rem;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      max-width: 500px;
+      width: 100%;
+      transform: scale(0.9);
+      transition: transform 0.3s ease;
+    }
+    
+    .modal-backdrop.show .modal-dialog {
+      transform: scale(1);
+    }
+    
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1.5rem;
+      border-bottom: 1px solid #E5E7EB;
+    }
+    
+    .modal-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 0;
+    }
+    
+    .modal-close-btn {
+      background: none;
+      border: none;
+      font-size: 1.5rem;
+      cursor: pointer;
+      color: #6B7280;
+      padding: 0;
+      line-height: 1;
+    }
+    
+    .modal-close-btn:hover {
+      color: #374151;
+    }
+    
+    .modal-body {
+      padding: 1.5rem;
+    }
+    
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      padding: 1.5rem;
+      border-top: 1px solid #E5E7EB;
+    }
+    
+    /* Loading spinner */
+    .spinner {
+      border: 3px solid #E5E7EB;
+      border-top-color: #3B82F6;
+      border-radius: 50%;
+      width: 2rem;
+      height: 2rem;
+      animation: spin 0.8s linear infinite;
+    }
+    
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+    
+    /* Offline indicator */
+    .offline-indicator {
+      position: fixed;
+      bottom: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #EF4444;
+      color: white;
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      font-size: 0.875rem;
+      z-index: 9997;
+      display: none;
+    }
+    
+    .offline-indicator.show {
+      display: block;
+    }
+    
+    /* Form error styles */
+    .error {
+      border-color: #EF4444 !important;
+    }
+    
+    .error-message {
+      color: #EF4444;
+      font-size: 0.875rem;
+      margin-top: 0.25rem;
+    }
+  </style>
+</head>
+<body class="bg-gray-50">
+  
+  <!-- Navigation -->
+  <nav class="bg-white shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex justify-between h-16">
+        <div class="flex items-center">
+          <h1 class="text-xl font-bold text-gray-900">My App</h1>
+        </div>
+        <div class="flex items-center space-x-4">
+          <button id="sync-btn" class="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900">
+            <span id="sync-icon">🔄</span>
+            <span id="sync-text">Sync</span>
+          </button>
+          <button id="settings-btn" class="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900">
+            ⚙️ Settings
+          </button>
+        </div>
+      </div>
+    </div>
+  </nav>
+  
+  <!-- Main Content -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div id="app-container">
+      <!-- Your app content goes here -->
+      <div class="text-center py-12">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">Welcome!</h2>
+        <p class="text-gray-600 mb-8">This is your local-first app template.</p>
+        <button id="setup-btn" class="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+          Setup GitHub Sync
+        </button>
+      </div>
+    </div>
+  </main>
+  
+  <!-- Offline Indicator -->
+  <div id="offline-indicator" class="offline-indicator">
+    📡 You are offline. Changes will sync when you're back online.
+  </div>
+  
+  <!-- Toast Container (created by toast.js) -->
+  
+  <!-- Framework Core Scripts -->
+  <script src="../../core/github-sync.js"></script>
+  <script src="../../core/local-storage.js"></script>
+  <script src="../../core/sync-controller.js"></script>
+  <script src="../../core/router.js"></script>
+  <script src="../../core/state.js"></script>
+  <script src="../../core/components/toast.js"></script>
+  <script src="../../core/components/modal.js"></script>
+  <script src="../../core/components/form.js"></script>
+  <script src="../../core/components/list.js"></script>
+  
+  <!-- App-specific Script -->
+  <script src="app.js"></script>
+  
+  <!-- Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+          .then(reg => console.log('Service Worker registered', reg))
+          .catch(err => console.log('Service Worker registration failed', err));
+      });
+    }
+  </script>
+  
+</body>
+</html>
