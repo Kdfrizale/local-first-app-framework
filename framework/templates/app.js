@@ -1,435 +1,278 @@
 /**
- * App Configuration
- * Customize these values for your app
+ * My App - Template for Local-First Apps
+ * 
+ * To create a new app:
+ * 1. Copy this directory to examples/your-app-name/
+ * 2. Rename this class and update the config
+ * 3. Implement onDataLoaded() and getData()
+ * 4. Add your custom rendering and business logic
  */
 
-const CONFIG = {
-  appName: 'my-app',
-  github: {
-    owner: 'your-username',
-    repo: 'family-data',
-    branch: 'main',
-    dataPath: 'apps/my-app/data.json'
-  }
-};
-
-// Initialize app
-let storage, github, syncController, router, appState;
-
-/**
- * Initialize the application
- */
-async function initApp() {
-  // Initialize local storage
-  storage = new LocalStorage(CONFIG.appName);
-  await storage.init();
-  
-  // Initialize state management
-  appState = new State({
-    isSetup: false,
-    isSyncing: false,
-    items: []
-  });
-  
-  // Check if GitHub is configured
-  const token = storage.loadSetting('githubToken');
-  const owner = storage.loadSetting('githubOwner') || CONFIG.github.owner;
-  const repo = storage.loadSetting('githubRepo') || CONFIG.github.repo;
-  
-  if (token) {
-    await setupGitHubSync(token, owner, repo);
-    appState.set('isSetup', true);
-    loadData();
-  } else {
-    showSetupScreen();
-  }
-  
-  // Setup router
-  setupRouter();
-  
-  // Setup UI event listeners
-  setupEventListeners();
-  
-  // Setup offline indicator
-  setupOfflineIndicator();
-}
-
-/**
- * Setup GitHub sync
- */
-async function setupGitHubSync(token, owner, repo) {
-  github = new GitHubSync({
-    token: token,
-    owner: owner,
-    repo: repo,
-    branch: CONFIG.github.branch
-  });
-  
-  syncController = new SyncController(storage, github);
-  
-  // Listen to sync events
-  syncController.on('syncStart', () => {
-    appState.set('isSyncing', true);
-    updateSyncButton(true);
-  });
-  
-  syncController.on('syncComplete', (results) => {
-    appState.set('isSyncing', false);
-    updateSyncButton(false);
-    
-    // Check for partial sync failures
-    if (results.errors && results.errors.length > 0) {
-      toast.warning(`Sync completed with ${results.errors.length} error(s)`, 5000);
-    } else if (results.uploaded > 0 || results.downloaded > 0) {
-      toast.success(`Sync complete! ${results.uploaded} uploaded, ${results.downloaded} downloaded`, 3000);
-    }
-    
-    // Reload data if anything changed
-    if (results.uploaded > 0 || results.downloaded > 0) {
-      loadData();
-    }
-  });
-  
-  syncController.on('syncError', (error) => {
-    appState.set('isSyncing', false);
-    updateSyncButton(false);
-    toast.error(`Sync failed: ${error.message}`, 5000);
-  });
-  
-  // Start automatic syncing
-  syncController.start();
-}
-
-/**
- * Load data from local storage
- */
-async function loadData() {
-  const data = await storage.load('appData');
-  
-  if (data) {
-    appState.set('items', data.items || []);
-    renderItems();
-  } else {
-    // Try to download from GitHub
-    if (syncController) {
-      try {
-        const result = await syncController.downloadFromGitHub(
-          CONFIG.github.dataPath,
-          'appData'
-        );
-        
-        if (result.status === 'downloaded') {
-          appState.set('items', result.data.items || []);
-          renderItems();
-        }
-      } catch (error) {
-        console.log('No data on GitHub yet');
+class MyApp extends App {
+  constructor() {
+    super({
+      appName: 'my-app',                        // Unique app identifier
+      dataPath: 'apps/my-app/data.json',        // Path in GitHub repo
+      initialState: {
+        items: []                                // Your initial state
       }
+    });
+  }
+
+  /**
+   * Called after app initialization
+   * Setup event handlers and state subscriptions here
+   */
+  async onInit() {
+    // Subscribe to state changes for re-rendering
+    this.state.subscribe('items', () => this.renderItems());
+    
+    // Setup UI event handlers
+    this.setupEventHandlers();
+  }
+
+  /**
+   * Called when data is loaded (from local storage or GitHub)
+   * @param {Object} data - The loaded data
+   * @param {string} source - 'local', 'remote', 'merged', or 'empty'
+   */
+  onDataLoaded(data, source) {
+    console.log(`[MyApp] Data loaded from ${source}`);
+    this.state.set('items', data.items || []);
+    this.renderItems();
+  }
+
+  /**
+   * Returns the data to be saved and synced
+   * Must return an object that will be saved as JSON
+   */
+  getData() {
+    return {
+      items: this.state.get('items')
+    };
+  }
+
+  /**
+   * Setup event handlers
+   */
+  setupEventHandlers() {
+    document.getElementById('sync-btn')?.addEventListener('click', () => this.sync());
+    document.getElementById('settings-btn')?.addEventListener('click', () => this.showSettings());
+    document.getElementById('add-btn')?.addEventListener('click', () => this.showAddItem());
+  }
+
+  /**
+   * Render items to the page
+   */
+  renderItems() {
+    const container = document.getElementById('app-container');
+    if (!container) return;
+    
+    // Show setup screen if not configured
+    if (!this.state.get('isSetup')) {
+      this.showSetupScreen();
+      return;
     }
-  }
-}
-
-/**
- * Save data to local storage
- */
-async function saveData() {
-  const data = {
-    items: appState.get('items'),
-    lastUpdated: new Date().toISOString()
-  };
-  
-  await storage.save('appData', data, {
-    synced: false,
-    githubPath: CONFIG.github.dataPath
-  });
-  
-  // Trigger sync if online
-  if (syncController && navigator.onLine) {
-    syncController.sync();
-  }
-}
-
-/**
- * Render items (customize this for your app)
- */
-function renderItems() {
-  const items = appState.get('items');
-  const container = document.getElementById('app-container');
-  
-  if (items.length === 0) {
+    
+    const items = this.state.get('items') || [];
+    
+    if (items.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state card">
+          <div class="empty-state-icon">📦</div>
+          <h3 class="empty-state-title">No items yet</h3>
+          <p class="empty-state-description">Add your first item to get started!</p>
+          <button onclick="app.showAddItem()" class="btn btn-primary">
+            ➕ Add Item
+          </button>
+        </div>
+      `;
+      return;
+    }
+    
     container.innerHTML = `
-      <div class="text-center py-12">
-        <h2 class="text-2xl font-bold text-gray-900 mb-4">No items yet</h2>
-        <p class="text-gray-600 mb-8">Get started by adding your first item.</p>
+      <div class="space-y-4">
+        <div class="flex justify-between items-center">
+          <h2 class="text-xl font-semibold">My Items</h2>
+          <button onclick="app.showAddItem()" class="btn btn-primary">➕ Add</button>
+        </div>
+        
+        <div class="space-y-3">
+          ${items.map(item => this.renderItem(item)).join('')}
+        </div>
       </div>
     `;
-  } else {
-    // Use ListHelper to render items
-    ListHelper.render(
-      items,
-      (item, index) => {
-        return `
-          <div class="bg-white p-4 rounded-lg shadow mb-4">
-            <h3 class="font-semibold text-gray-900">${item.title || 'Untitled'}</h3>
-            <p class="text-gray-600 text-sm mt-1">${item.description || ''}</p>
-          </div>
-        `;
-      },
-      container,
-      {
-        emptyMessage: 'No items to display'
-      }
-    );
   }
-}
 
-/**
- * Show setup screen
- */
-function showSetupScreen() {
-  const container = document.getElementById('app-container');
-  
-  container.innerHTML = `
-    <div class="max-w-md mx-auto">
-      <div class="bg-white rounded-lg shadow-md p-6">
-        <h2 class="text-2xl font-bold text-gray-900 mb-4">Setup GitHub Sync</h2>
-        <p class="text-gray-600 mb-6">Enter your GitHub details to enable data synchronization.</p>
-        
-        <form id="setup-form">
-          <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700 mb-2">
-              GitHub Personal Access Token
-            </label>
-            <input 
-              type="password" 
-              name="token" 
-              required
-              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="ghp_..."
-            />
-            <p class="text-xs text-gray-500 mt-1">
-              <a href="https://github.com/settings/tokens/new" target="_blank" class="text-blue-600 hover:underline">
-                Create a token
-              </a> with 'repo' scope
-            </p>
+  /**
+   * Render a single item
+   */
+  renderItem(item) {
+    return `
+      <div class="card card-body flex justify-between items-center">
+        <div>
+          <h3 class="font-medium">${this.escapeHtml(item.title)}</h3>
+          <p class="text-sm text-gray-500">${this.escapeHtml(item.description || '')}</p>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="app.editItem('${item.id}')" class="btn btn-ghost">✏️</button>
+          <button onclick="app.deleteItem('${item.id}')" class="btn btn-ghost text-red-600">🗑️</button>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Show add item modal
+   */
+  showAddItem() {
+    modal.show({
+      title: '➕ Add Item',
+      content: `
+        <form id="item-form" class="space-y-4">
+          <div>
+            <label class="form-label">Title *</label>
+            <input type="text" name="title" required class="form-input" placeholder="Enter title">
           </div>
-          
-          <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700 mb-2">
-              GitHub Username
-            </label>
-            <input 
-              type="text" 
-              name="owner" 
-              required
-              value="${CONFIG.github.owner}"
-              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+          <div>
+            <label class="form-label">Description</label>
+            <textarea name="description" class="form-input" rows="3" placeholder="Optional description"></textarea>
           </div>
-          
-          <div class="mb-6">
-            <label class="block text-sm font-medium text-gray-700 mb-2">
-              Repository Name
-            </label>
-            <input 
-              type="text" 
-              name="repo" 
-              required
-              value="${CONFIG.github.repo}"
-              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          
-          <button 
-            type="submit"
-            class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            Connect to GitHub
-          </button>
         </form>
-      </div>
-    </div>
-  `;
-  
-  // Setup form submission
-  FormHelper.onSubmit('#setup-form', async (data) => {
-    try {
-      // Test connection
-      const testGithub = new GitHubSync({
-        token: data.token,
-        owner: data.owner,
-        repo: data.repo
-      });
-      
-      const authTest = await testGithub.testAuth();
-      
-      if (!authTest.success) {
-        toast.error('GitHub authentication failed. Please check your token.');
-        return;
-      }
-      
-      const repoTest = await testGithub.validateRepo();
-      
-      if (!repoTest.success) {
-        toast.error('Cannot access repository. Please check the repo name and token permissions.');
-        return;
-      }
-      
-      // Save settings
-      storage.saveSetting('githubToken', data.token);
-      storage.saveSetting('githubOwner', data.owner);
-      storage.saveSetting('githubRepo', data.repo);
-      
-      // Setup sync
-      await setupGitHubSync(data.token, data.owner, data.repo);
-      appState.set('isSetup', true);
-      
-      toast.success('GitHub sync configured successfully!');
-      
-      // Load data
-      loadData();
-      
-    } catch (error) {
-      toast.error(`Setup failed: ${error.message}`);
-    }
-  });
-}
-
-/**
- * Setup router
- */
-function setupRouter() {
-  router = new Router();
-  
-  router.on('/', () => {
-    // Home route
-    if (appState.get('isSetup')) {
-      renderItems();
-    } else {
-      showSetupScreen();
-    }
-  });
-  
-  // Add more routes as needed
-}
-
-/**
- * Setup event listeners
- */
-function setupEventListeners() {
-  // Sync button
-  document.getElementById('sync-btn').addEventListener('click', async () => {
-    if (syncController) {
-      await syncController.sync();
-    } else {
-      toast.warning('GitHub sync is not configured yet');
-    }
-  });
-  
-  // Settings button
-  document.getElementById('settings-btn').addEventListener('click', () => {
-    showSettings();
-  });
-}
-
-/**
- * Show settings modal
- */
-async function showSettings() {
-  const token = storage.loadSetting('githubToken');
-  const owner = storage.loadSetting('githubOwner');
-  const repo = storage.loadSetting('githubRepo');
-  
-  const content = `
-    <div class="space-y-4">
-      <div>
-        <p class="text-sm font-medium text-gray-700">GitHub Owner</p>
-        <p class="text-gray-900">${owner || 'Not configured'}</p>
-      </div>
-      <div>
-        <p class="text-sm font-medium text-gray-700">Repository</p>
-        <p class="text-gray-900">${repo || 'Not configured'}</p>
-      </div>
-      <div>
-        <p class="text-sm font-medium text-gray-700">Token</p>
-        <p class="text-gray-900">${token ? '••••••••' : 'Not configured'}</p>
-      </div>
-      ${syncController ? `
-      <div>
-        <p class="text-sm font-medium text-gray-700">Last Sync</p>
-        <p class="text-gray-900">${syncController.lastSyncTime ? syncController.lastSyncTime.toLocaleString() : 'Never'}</p>
-      </div>
-      ` : ''}
-    </div>
-  `;
-  
-  modal.show({
-    title: 'Settings',
-    content,
-    buttons: [
-      {
-        text: 'Reconfigure',
-        onClick: () => {
-          modal.close();
-          storage.clearSettings();
-          appState.set('isSetup', false);
-          if (syncController) {
-            syncController.stop();
+      `,
+      buttons: [
+        { text: 'Cancel', onClick: () => modal.close() },
+        {
+          text: 'Add',
+          primary: true,
+          onClick: () => {
+            const data = FormHelper.getData('#item-form');
+            if (!data.title?.trim()) {
+              toast.error('Title is required');
+              return;
+            }
+            this.addItem(data);
+            modal.close();
           }
-          showSetupScreen();
         }
-      },
-      {
-        text: 'Close',
-        primary: true,
-        onClick: () => modal.close()
+      ]
+    });
+  }
+
+  /**
+   * Add a new item
+   */
+  addItem(data) {
+    const items = this.state.get('items') || [];
+    
+    const newItem = {
+      id: this.generateId(),
+      title: data.title.trim(),
+      description: data.description?.trim() || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    this.state.set('items', [...items, newItem]);
+    this.saveData();
+    toast.success('Item added!');
+  }
+
+  /**
+   * Edit an item
+   */
+  editItem(id) {
+    const item = this.state.get('items').find(i => i.id === id);
+    if (!item) return;
+    
+    modal.show({
+      title: '✏️ Edit Item',
+      content: `
+        <form id="item-form" class="space-y-4">
+          <div>
+            <label class="form-label">Title *</label>
+            <input type="text" name="title" required class="form-input" value="${this.escapeHtml(item.title)}">
+          </div>
+          <div>
+            <label class="form-label">Description</label>
+            <textarea name="description" class="form-input" rows="3">${this.escapeHtml(item.description || '')}</textarea>
+          </div>
+        </form>
+      `,
+      buttons: [
+        { text: 'Cancel', onClick: () => modal.close() },
+        {
+          text: 'Save',
+          primary: true,
+          onClick: () => {
+            const data = FormHelper.getData('#item-form');
+            if (!data.title?.trim()) {
+              toast.error('Title is required');
+              return;
+            }
+            this.updateItem(id, data);
+            modal.close();
+          }
+        }
+      ]
+    });
+  }
+
+  /**
+   * Update an item
+   */
+  updateItem(id, data) {
+    const items = this.state.get('items').map(item => {
+      if (item.id === id) {
+        return {
+          ...item,
+          title: data.title.trim(),
+          description: data.description?.trim() || '',
+          updatedAt: new Date().toISOString()
+        };
       }
-    ]
-  });
-}
-
-/**
- * Update sync button state
- */
-function updateSyncButton(syncing) {
-  const btn = document.getElementById('sync-btn');
-  const icon = document.getElementById('sync-icon');
-  const text = document.getElementById('sync-text');
-  
-  if (syncing) {
-    btn.disabled = true;
-    icon.textContent = '⏳';
-    text.textContent = 'Syncing...';
-  } else {
-    btn.disabled = false;
-    icon.textContent = '🔄';
-    text.textContent = 'Sync';
+      return item;
+    });
+    
+    this.state.set('items', items);
+    this.saveData();
+    toast.success('Item updated!');
   }
-}
 
-/**
- * Setup offline indicator
- */
-function setupOfflineIndicator() {
-  const indicator = document.getElementById('offline-indicator');
-  
-  function updateOnlineStatus() {
-    if (navigator.onLine) {
-      indicator.classList.remove('show');
-    } else {
-      indicator.classList.add('show');
-    }
+  /**
+   * Delete an item
+   */
+  async deleteItem(id) {
+    const confirmed = await modal.confirm('Delete this item?', 'Confirm Delete');
+    if (!confirmed) return;
+    
+    const items = this.state.get('items').filter(i => i.id !== id);
+    this.state.set('items', items);
+    this.saveData();
+    toast.success('Item deleted!');
   }
-  
-  window.addEventListener('online', updateOnlineStatus);
-  window.addEventListener('offline', updateOnlineStatus);
-  
-  updateOnlineStatus();
+
+  /**
+   * Generate unique ID
+   */
+  generateId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  }
+
+  /**
+   * Escape HTML to prevent XSS
+   */
+  escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
 }
 
 // Initialize app when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initApp);
-} else {
-  initApp();
-}
+let app;
+document.addEventListener('DOMContentLoaded', async () => {
+  app = new MyApp();
+  await app.init();
+});

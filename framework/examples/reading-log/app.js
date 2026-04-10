@@ -3,714 +3,444 @@
  * Track books read by family members
  */
 
-const CONFIG = {
-  appName: 'reading-log',
-  github: {
-    owner: 'your-username',
-    repo: 'family-data',
-    branch: 'main',
-    dataPath: 'apps/reading-log/data.json'
-  }
-};
-
-let storage, github, syncController, router, appState;
-
-/**
- * Initialize the application
- */
-async function initApp() {
-  storage = new LocalStorage(CONFIG.appName);
-  await storage.init();
-  
-  appState = new State({
-    isSetup: false,
-    isSyncing: false,
-    books: [],
-    readers: [],
-    searchQuery: '',
-    readerFilter: '',
-    sortBy: 'date-desc'
-  });
-  
-  const token = storage.loadSetting('githubToken');
-  const owner = storage.loadSetting('githubOwner') || CONFIG.github.owner;
-  const repo = storage.loadSetting('githubRepo') || CONFIG.github.repo;
-  
-  if (token) {
-    await setupGitHubSync(token, owner, repo);
-    appState.set('isSetup', true);
-    await loadData();
-  } else {
-    showSetupScreen();
-  }
-  
-  setupEventListeners();
-  setupOfflineIndicator();
-  
-  // Listen to state changes
-  appState.subscribe('books', renderBooks);
-  appState.subscribe('searchQuery', renderBooks);
-  appState.subscribe('readerFilter', renderBooks);
-  appState.subscribe('sortBy', renderBooks);
-}
-
-async function setupGitHubSync(token, owner, repo) {
-  github = new GitHubSync({ token, owner, repo, branch: CONFIG.github.branch });
-  syncController = new SyncController(storage, github);
-  
-  syncController.on('syncStart', () => {
-    appState.set('isSyncing', true);
-    updateSyncButton(true);
-  });
-  
-  syncController.on('syncComplete', (results) => {
-    appState.set('isSyncing', false);
-    updateSyncButton(false);
-    
-    if (results.errors && results.errors.length > 0) {
-      // Partial sync failure
-      toast.warning(`Sync completed with ${results.errors.length} error(s)`, 5000);
-    } else if (results.merged > 0) {
-      // Data was merged with remote changes
-      toast.info(`Sync complete! Merged ${results.merged} change(s) from other devices`, 4000);
-    } else if (results.uploaded > 0 || results.downloaded > 0) {
-      toast.success(`Sync complete!`);
-    }
-    
-    loadData();
-  });
-  
-  syncController.on('syncError', (error) => {
-    appState.set('isSyncing', false);
-    updateSyncButton(false);
-    toast.error(`Sync failed: ${error.message}`);
-  });
-  
-  syncController.start();
-}
-
-async function loadData() {
-  const data = await storage.load('booksData');
-  
-  if (data) {
-    appState.set({
-      books: data.books || [],
-      readers: data.readers || []
+class ReadingLogApp extends App {
+  constructor() {
+    super({
+      appName: 'reading-log',
+      dataPath: 'apps/reading-log/data.json'
     });
-    updateReadersFilter();
-    renderBooks();
-    renderStats();
-  } else if (syncController) {
-    try {
-      const result = await syncController.downloadFromGitHub(CONFIG.github.dataPath, 'booksData');
-      if (result.status === 'downloaded' && result.data) {
-        appState.set({
-          books: result.data.books || [],
-          readers: result.data.readers || []
-        });
-        updateReadersFilter();
-        renderBooks();
-        renderStats();
+    
+    this.books = [];
+    this.readers = [];
+    this.selectedReaders = [];
+    
+    // Filters
+    this.searchQuery = '';
+    this.filterReader = '';
+    this.sortBy = 'date-desc';
+  }
+
+  async onInit() {
+    this.setDefaultDate();
+    this.setupEventHandlers();
+  }
+
+  onDataLoaded(data, source) {
+    console.log('[ReadingLog] Data loaded from:', source);
+    this.books = data.books || [];
+    this.readers = data.readers || [];
+    
+    // Also extract readers from books (in case readers array is incomplete)
+    this.books.forEach(book => {
+      (book.readers || []).forEach(r => {
+        if (r && !this.readers.includes(r)) {
+          this.readers.push(r);
+        }
+      });
+    });
+    
+    this.updateReaderSelect();
+    this.updateFilterReaderSelect();
+    this.render();
+    this.updateStats();
+  }
+
+  getData() {
+    return {
+      books: this.books,
+      readers: this.readers
+    };
+  }
+
+  // ============================================================
+  // SETUP
+  // ============================================================
+
+  setDefaultDate() {
+    const dateInput = document.getElementById('date-read-input');
+    if (dateInput) {
+      dateInput.value = new Date().toISOString().split('T')[0];
+    }
+  }
+
+  setupEventHandlers() {
+    // Sync & Settings
+    document.getElementById('sync-btn').addEventListener('click', () => this.sync());
+    document.getElementById('settings-btn').addEventListener('click', () => this.showSettings());
+    
+    // Add book form
+    document.getElementById('add-book-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.addBook(e.target);
+    });
+    
+    // Reader multi-select
+    document.getElementById('reader-select').addEventListener('change', (e) => {
+      this.handleReaderSelect(e.target.value);
+      e.target.value = '';
+    });
+    
+    // Search
+    document.getElementById('search-input').addEventListener('input', (e) => {
+      this.searchQuery = e.target.value.toLowerCase();
+      this.render();
+    });
+    
+    // Filter by reader
+    document.getElementById('filter-reader').addEventListener('change', (e) => {
+      this.filterReader = e.target.value;
+      this.render();
+    });
+    
+    // Sort
+    document.getElementById('sort-select').addEventListener('change', (e) => {
+      this.sortBy = e.target.value;
+      this.render();
+    });
+  }
+
+  // ============================================================
+  // READER MULTI-SELECT
+  // ============================================================
+
+  updateReaderSelect() {
+    const select = document.getElementById('reader-select');
+    const options = ['<option value="">Select reader...</option>'];
+    
+    // Show ALL readers (sorted alphabetically)
+    const sortedReaders = [...this.readers].sort((a, b) => a.localeCompare(b));
+    sortedReaders.forEach(reader => {
+      const selected = this.selectedReaders.includes(reader);
+      options.push(`<option value="${this.escapeHtml(reader)}" ${selected ? 'disabled' : ''}>${this.escapeHtml(reader)}${selected ? ' ✓' : ''}</option>`);
+    });
+    
+    options.push('<option value="__new__">+ Add new reader</option>');
+    select.innerHTML = options.join('');
+  }
+
+  updateFilterReaderSelect() {
+    const select = document.getElementById('filter-reader');
+    const options = ['<option value="">All Readers</option>'];
+    
+    const sortedReaders = [...this.readers].sort((a, b) => a.localeCompare(b));
+    sortedReaders.forEach(reader => {
+      options.push(`<option value="${this.escapeHtml(reader)}">${this.escapeHtml(reader)}</option>`);
+    });
+    
+    select.innerHTML = options.join('');
+  }
+
+  handleReaderSelect(value) {
+    if (!value) return;
+    
+    if (value === '__new__') {
+      this.promptNewReader();
+    } else if (!this.selectedReaders.includes(value)) {
+      this.selectedReaders.push(value);
+      this.renderSelectedReaders();
+      this.updateReaderSelect();
+    }
+  }
+
+  async promptNewReader() {
+    const name = await modal.prompt('Enter reader name:', '');
+    if (name && name.trim()) {
+      const readerName = name.trim();
+      if (!this.readers.includes(readerName)) {
+        this.readers.push(readerName);
       }
-    } catch (error) {
-      console.log('No data on GitHub yet');
-      renderBooks();
-      renderStats();
+      if (!this.selectedReaders.includes(readerName)) {
+        this.selectedReaders.push(readerName);
+      }
+      this.renderSelectedReaders();
+      this.updateReaderSelect();
     }
   }
-}
 
-async function saveData() {
-  const data = {
-    books: appState.get('books'),
-    readers: appState.get('readers'),
-    lastUpdated: new Date().toISOString()
-  };
-  
-  await storage.save('booksData', data, {
-    synced: false,
-    githubPath: CONFIG.github.dataPath
-  });
-  
-  if (syncController && navigator.onLine) {
-    setTimeout(() => syncController.sync(), 500);
+  renderSelectedReaders() {
+    const container = document.getElementById('selected-readers');
+    container.innerHTML = this.selectedReaders.map(reader => `
+      <span class="reader-tag">
+        ${this.escapeHtml(reader)}
+        <button type="button" onclick="app.removeSelectedReader('${this.escapeHtml(reader)}')">&times;</button>
+      </span>
+    `).join('');
+    
+    document.getElementById('readers-input').value = JSON.stringify(this.selectedReaders);
   }
-}
 
-function renderBooks() {
-  let books = appState.get('books') || [];
-  const searchQuery = appState.get('searchQuery');
-  const readerFilter = appState.get('readerFilter');
-  const sortBy = appState.get('sortBy');
-  
-  // Filter
-  if (searchQuery) {
-    books = ListHelper.filter(books, searchQuery, ['title', 'author', 'notes']);
+  removeSelectedReader(reader) {
+    this.selectedReaders = this.selectedReaders.filter(r => r !== reader);
+    this.renderSelectedReaders();
+    this.updateReaderSelect();
   }
-  
-  if (readerFilter) {
-    // Support both old format (single reader) and new format (readers array)
-    books = books.filter(b => {
-      const bookReaders = Array.isArray(b.readers) ? b.readers : (b.reader ? [b.reader] : []);
-      return bookReaders.includes(readerFilter);
-    });
+
+  // ============================================================
+  // BOOK OPERATIONS
+  // ============================================================
+
+  addBook(form) {
+    const formData = new FormData(form);
+    
+    const book = {
+      id: this.generateId(),
+      title: formData.get('title').trim(),
+      author: formData.get('author')?.trim() || '',
+      readers: [...this.selectedReaders],
+      dateRead: formData.get('dateRead') || new Date().toISOString().split('T')[0],
+      rating: parseInt(formData.get('rating')) || 0,
+      notes: formData.get('notes')?.trim() || '',
+      createdAt: new Date().toISOString()
+    };
+    
+    this.books.unshift(book);
+    
+    // Reset form
+    form.reset();
+    this.selectedReaders = [];
+    this.renderSelectedReaders();
+    this.setDefaultDate();
+    
+    this.render();
+    this.updateStats();
+    this.saveData();
+    
+    this._showToast('Book added!', 'success');
   }
-  
-  // Sort
-  const sortFns = {
-    'date-desc': (a, b) => new Date(b.dateFinished) - new Date(a.dateFinished),
-    'date-asc': (a, b) => new Date(a.dateFinished) - new Date(b.dateFinished),
-    'title': (a, b) => a.title.localeCompare(b.title),
-    'author': (a, b) => a.author.localeCompare(b.author)
-  };
-  
-  books = [...books].sort(sortFns[sortBy] || sortFns['date-desc']);
-  
-  // Render
-  const container = document.getElementById('books-container');
-  
-  if (books.length === 0) {
-    container.innerHTML = `
-      <div class="text-center py-12">
-        <span class="text-6xl mb-4 block">📚</span>
-        <h2 class="text-2xl font-bold text-gray-900 mb-4">No books yet</h2>
-        <p class="text-gray-600 mb-8">Start tracking your family's reading journey!</p>
-        <button onclick="showAddBookModal()" class="px-6 py-3 bg-purple-600 text-white rounded-md hover:bg-purple-700">
-          Add Your First Book
-        </button>
-      </div>
-    `;
-  } else {
-    ListHelper.render(
-      books,
-      (book) => {
-        const date = new Date(book.dateFinished).toLocaleDateString();
-        // Handle both old format (single reader) and new format (readers array)
-        const bookReaders = Array.isArray(book.readers) ? book.readers : (book.reader ? [book.reader] : []);
-        const readersDisplay = bookReaders.length > 0 
-          ? bookReaders.map(r => `<span class="inline-block bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full">${r}</span>`).join(' ')
-          : '<span class="text-gray-400">No reader</span>';
-        
-        return `
-          <div class="book-card bg-white rounded-lg shadow p-6 mb-4">
-            <div class="flex justify-between items-start mb-3">
-              <div class="flex-1">
-                <h3 class="text-xl font-bold text-gray-900 mb-1">${book.title}</h3>
-                <p class="text-gray-600">by ${book.author}</p>
-              </div>
-              <div class="flex space-x-2">
-                <button onclick="editBook('${book.id}')" class="text-purple-600 hover:text-purple-800">✏️</button>
-                <button onclick="deleteBook('${book.id}')" class="text-red-600 hover:text-red-800">🗑️</button>
-              </div>
+
+  editBook(id) {
+    const book = this.books.find(b => b.id === id);
+    if (!book) return;
+    
+    const readersHtml = this.readers.map(r => 
+      `<option value="${this.escapeHtml(r)}" ${(book.readers || []).includes(r) ? 'selected' : ''}>${this.escapeHtml(r)}</option>`
+    ).join('');
+    
+    modal.show({
+      title: '✏️ Edit Book',
+      content: `
+        <form id="edit-book-form" class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Title *</label>
+            <input type="text" name="title" required value="${this.escapeHtml(book.title)}"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Author</label>
+            <input type="text" name="author" value="${this.escapeHtml(book.author || '')}"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Reader(s)</label>
+            <select name="readers" multiple class="w-full px-3 py-2 border border-gray-300 rounded-lg" style="height: 100px;">
+              ${readersHtml}
+            </select>
+            <p class="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple</p>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Date Read</label>
+              <input type="date" name="dateRead" value="${book.dateRead || ''}"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg">
             </div>
-            <div class="flex flex-wrap items-center gap-2 text-sm text-gray-500 mb-3">
-              <span class="flex items-center gap-1">👤 ${readersDisplay}</span>
-              <span>📅 ${date}</span>
-              ${book.rating ? `<span>⭐ ${book.rating}/5</span>` : ''}
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Rating</label>
+              <select name="rating" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                <option value="">Select...</option>
+                ${[5,4,3,2,1].map(n => `<option value="${n}" ${book.rating === n ? 'selected' : ''}>${'⭐'.repeat(n)} (${n})</option>`).join('')}
+              </select>
             </div>
-            ${book.notes ? `<p class="text-gray-700 text-sm mt-3 border-t pt-3">${book.notes}</p>` : ''}
           </div>
-        `;
-      },
-      container,
-      { emptyMessage: 'No books found' }
-    );
-  }
-}
-
-function renderStats() {
-  const books = appState.get('books') || [];
-  const readers = appState.get('readers') || [];
-  
-  const totalBooks = books.length;
-  const totalReaders = readers.length;
-  const thisMonth = books.filter(b => {
-    const date = new Date(b.dateFinished);
-    const now = new Date();
-    return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
-  }).length;
-  
-  const avgRating = books.filter(b => b.rating).length > 0
-    ? (books.filter(b => b.rating).reduce((sum, b) => sum + parseFloat(b.rating), 0) / books.filter(b => b.rating).length).toFixed(1)
-    : 'N/A';
-  
-  const container = document.getElementById('stats-container');
-  container.innerHTML = `
-    <div class="bg-white rounded-lg shadow p-4">
-      <p class="text-gray-500 text-sm mb-1">Total Books</p>
-      <p class="text-3xl font-bold text-purple-600">${totalBooks}</p>
-    </div>
-    <div class="bg-white rounded-lg shadow p-4">
-      <p class="text-gray-500 text-sm mb-1">This Month</p>
-      <p class="text-3xl font-bold text-indigo-600">${thisMonth}</p>
-    </div>
-    <div class="bg-white rounded-lg shadow p-4">
-      <p class="text-gray-500 text-sm mb-1">Readers</p>
-      <p class="text-3xl font-bold text-pink-600">${totalReaders}</p>
-    </div>
-    <div class="bg-white rounded-lg shadow p-4">
-      <p class="text-gray-500 text-sm mb-1">Avg Rating</p>
-      <p class="text-3xl font-bold text-amber-600">${avgRating}</p>
-    </div>
-  `;
-}
-
-function updateReadersFilter() {
-  const readers = appState.get('readers') || [];
-  const select = document.getElementById('reader-filter');
-  
-  select.innerHTML = '<option value="">All readers</option>';
-  readers.forEach(reader => {
-    select.innerHTML += `<option value="${reader}">${reader}</option>`;
-  });
-}
-
-function showAddBookModal() {
-  const readers = appState.get('readers') || [];
-  
-  const readerCheckboxes = readers.map(r => `
-    <label class="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer">
-      <input type="checkbox" name="readers" value="${r}" class="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500" />
-      <span class="text-gray-700">${r}</span>
-    </label>
-  `).join('');
-  
-  modal.show({
-    title: '📚 Add New Book',
-    content: `
-      <form id="add-book-form" class="space-y-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Book Title *</label>
-          <input type="text" name="title" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500" />
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Author *</label>
-          <input type="text" name="author" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500" />
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Readers * <span class="font-normal text-gray-500">(select who read this book)</span></label>
-          <div class="border border-gray-300 rounded-md p-2 max-h-32 overflow-y-auto bg-white">
-            ${readerCheckboxes || '<p class="text-gray-400 text-sm p-2">No readers yet. Add one below.</p>'}
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            <textarea name="notes" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg">${this.escapeHtml(book.notes || '')}</textarea>
           </div>
-          <div class="mt-2 flex space-x-2">
-            <input type="text" id="new-reader-input" placeholder="Add new reader..." class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm" />
-            <button type="button" onclick="addReaderToForm()" class="px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm">+ Add</button>
-          </div>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Date Finished *</label>
-          <input type="date" name="dateFinished" required value="${new Date().toISOString().split('T')[0]}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500" />
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Rating (1-5)</label>
-          <input type="number" name="rating" min="1" max="5" step="0.5" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500" />
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Notes</label>
-          <textarea name="notes" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
-        </div>
-      </form>
-    `,
-    buttons: [
-      { text: 'Cancel', onClick: () => modal.close() },
-      {
-        text: 'Add Book',
-        primary: true,
-        onClick: async () => {
-          const form = document.getElementById('add-book-form');
-          const validation = FormHelper.validate(form);
-          
-          // Get selected readers
-          const selectedReaders = Array.from(form.querySelectorAll('input[name="readers"]:checked'))
-            .map(cb => cb.value);
-          
-          if (selectedReaders.length === 0) {
-            toast.error('Please select at least one reader');
-            return;
-          }
-          
-          if (validation.valid) {
-            const data = FormHelper.getData(form);
-            delete data.readers; // Remove from form data, we handle it separately
-            
-            const now = new Date().toISOString();
-            const newBook = {
-              id: Date.now().toString(),
-              ...data,
-              readers: selectedReaders, // Store as array
-              createdAt: now,
-              updatedAt: now  // Add updatedAt timestamp
-            };
-            
-            // Create new array to trigger state change notification
-            const books = [...(appState.get('books') || []), newBook];
-            appState.set('books', books);
-            
-            // Add any new readers to the global readers list
-            const currentReaders = appState.get('readers') || [];
-            const newReaders = selectedReaders.filter(r => !currentReaders.includes(r));
-            if (newReaders.length > 0) {
-              appState.set('readers', [...currentReaders, ...newReaders]);
-              updateReadersFilter();
+        </form>
+      `,
+      buttons: [
+        { text: 'Cancel', onClick: () => modal.close() },
+        {
+          text: 'Save Changes',
+          primary: true,
+          onClick: () => {
+            const form = document.getElementById('edit-book-form');
+            if (!form.checkValidity()) {
+              form.reportValidity();
+              return;
             }
             
-            await saveData();
-            renderStats();
+            const formData = new FormData(form);
+            const selectedReaders = Array.from(form.querySelector('select[name="readers"]').selectedOptions).map(o => o.value);
             
-            toast.success(`"${data.title}" added!`);
+            const idx = this.books.findIndex(b => b.id === id);
+            if (idx !== -1) {
+              this.books[idx] = {
+                ...this.books[idx],
+                title: formData.get('title').trim(),
+                author: formData.get('author')?.trim() || '',
+                readers: selectedReaders,
+                dateRead: formData.get('dateRead') || '',
+                rating: parseInt(formData.get('rating')) || 0,
+                notes: formData.get('notes')?.trim() || '',
+                updatedAt: new Date().toISOString()
+              };
+              
+              this.render();
+              this.saveData();
+              this._showToast('Book updated!', 'success');
+            }
+            
             modal.close();
           }
         }
-      }
-    ]
-  });
-}
+      ]
+    });
+  }
 
-// Helper to add a new reader in the add/edit form
-window.addReaderToForm = function() {
-  const input = document.getElementById('new-reader-input');
-  const name = input.value.trim();
-  
-  if (!name) return;
-  
-  // Find the checkbox container
-  const container = input.closest('div').previousElementSibling;
-  
-  // Remove "no readers" message if present
-  const emptyMsg = container.querySelector('p');
-  if (emptyMsg) emptyMsg.remove();
-  
-  // Check if reader already exists
-  const existingCheckboxes = container.querySelectorAll('input[name="readers"]');
-  for (const cb of existingCheckboxes) {
-    if (cb.value.toLowerCase() === name.toLowerCase()) {
-      cb.checked = true;
-      input.value = '';
+  deleteBook(id) {
+    modal.confirm('Delete this book from your reading log?', 'Delete Book').then(confirmed => {
+      if (!confirmed) return;
+      
+      this.books = this.books.filter(b => b.id !== id);
+      this.render();
+      this.updateStats();
+      this.saveData();
+      
+      this._showToast('Book deleted', 'info');
+    });
+  }
+
+  // ============================================================
+  // RENDERING
+  // ============================================================
+
+  render() {
+    const list = document.getElementById('books-list');
+    
+    // Start with all books
+    let filteredBooks = [...this.books];
+    
+    // Apply search filter
+    if (this.searchQuery) {
+      filteredBooks = filteredBooks.filter(book => 
+        book.title.toLowerCase().includes(this.searchQuery) ||
+        (book.author || '').toLowerCase().includes(this.searchQuery) ||
+        (book.readers || []).some(r => r.toLowerCase().includes(this.searchQuery)) ||
+        (book.notes || '').toLowerCase().includes(this.searchQuery)
+      );
+    }
+    
+    // Apply reader filter
+    if (this.filterReader) {
+      filteredBooks = filteredBooks.filter(book => 
+        (book.readers || []).includes(this.filterReader)
+      );
+    }
+    
+    // Apply sorting
+    filteredBooks.sort((a, b) => {
+      switch (this.sortBy) {
+        case 'date-desc':
+          return (b.dateRead || '').localeCompare(a.dateRead || '');
+        case 'date-asc':
+          return (a.dateRead || '').localeCompare(b.dateRead || '');
+        case 'title-asc':
+          return a.title.localeCompare(b.title);
+        case 'title-desc':
+          return b.title.localeCompare(a.title);
+        case 'rating-desc':
+          return (b.rating || 0) - (a.rating || 0);
+        case 'rating-asc':
+          return (a.rating || 0) - (b.rating || 0);
+        default:
+          return 0;
+      }
+    });
+    
+    if (filteredBooks.length === 0) {
+      list.innerHTML = `<div class="p-8 text-center text-gray-400">
+        ${this.searchQuery || this.filterReader ? 'No books match your filters.' : 'No books yet. Add your first book above!'}
+      </div>`;
       return;
     }
-  }
-  
-  // Add new checkbox
-  const label = document.createElement('label');
-  label.className = 'flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer';
-  label.innerHTML = `
-    <input type="checkbox" name="readers" value="${name}" checked class="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500" />
-    <span class="text-gray-700">${name}</span>
-  `;
-  container.appendChild(label);
-  
-  // Clear input
-  input.value = '';
-  
-  // Add to global readers list
-  const readers = appState.get('readers') || [];
-  if (!readers.includes(name)) {
-    appState.set('readers', [...readers, name]);
-    updateReadersFilter();
-  }
-};
-
-window.editBook = function(id) {
-  const books = appState.get('books') || [];
-  const book = books.find(b => b.id === id);
-  
-  if (!book) return;
-  
-  // Handle both old format (single reader) and new format (readers array)
-  const bookReaders = Array.isArray(book.readers) ? book.readers : (book.reader ? [book.reader] : []);
-  
-  const allReaders = appState.get('readers') || [];
-  const readerCheckboxes = allReaders.map(r => `
-    <label class="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer">
-      <input type="checkbox" name="readers" value="${r}" ${bookReaders.includes(r) ? 'checked' : ''} class="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500" />
-      <span class="text-gray-700">${r}</span>
-    </label>
-  `).join('');
-  
-  modal.show({
-    title: '✏️ Edit Book',
-    content: `
-      <form id="edit-book-form" class="space-y-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Book Title *</label>
-          <input type="text" name="title" required value="${book.title}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500" />
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Author *</label>
-          <input type="text" name="author" required value="${book.author}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500" />
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Readers * <span class="font-normal text-gray-500">(select who read this book)</span></label>
-          <div class="border border-gray-300 rounded-md p-2 max-h-32 overflow-y-auto bg-white">
-            ${readerCheckboxes || '<p class="text-gray-400 text-sm p-2">No readers yet. Add one below.</p>'}
-          </div>
-          <div class="mt-2 flex space-x-2">
-            <input type="text" id="new-reader-input" placeholder="Add new reader..." class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm" />
-            <button type="button" onclick="addReaderToForm()" class="px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm">+ Add</button>
-          </div>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Date Finished *</label>
-          <input type="date" name="dateFinished" required value="${book.dateFinished}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500" />
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Rating (1-5)</label>
-          <input type="number" name="rating" min="1" max="5" step="0.5" value="${book.rating || ''}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500" />
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Notes</label>
-          <textarea name="notes" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500">${book.notes || ''}</textarea>
-        </div>
-      </form>
-    `,
-    buttons: [
-      { text: 'Cancel', onClick: () => modal.close() },
-      {
-        text: 'Save Changes',
-        primary: true,
-        onClick: async () => {
-          const form = document.getElementById('edit-book-form');
-          const validation = FormHelper.validate(form);
-          
-          // Get selected readers
-          const selectedReaders = Array.from(form.querySelectorAll('input[name="readers"]:checked'))
-            .map(cb => cb.value);
-          
-          if (selectedReaders.length === 0) {
-            toast.error('Please select at least one reader');
-            return;
-          }
-          
-          if (validation.valid) {
-            const data = FormHelper.getData(form);
-            delete data.readers; // Remove from form data
+    
+    list.innerHTML = filteredBooks.map(book => `
+      <div class="p-4 hover:bg-gray-50 transition">
+        <div class="flex justify-between items-start">
+          <div class="flex-1">
+            <h3 class="font-semibold text-gray-900">${this.escapeHtml(book.title)}</h3>
+            ${book.author ? `<p class="text-sm text-gray-600">by ${this.escapeHtml(book.author)}</p>` : ''}
             
-            const books = appState.get('books') || [];
-            const index = books.findIndex(b => b.id === id);
+            <div class="flex flex-wrap items-center gap-3 mt-2 text-sm text-gray-500">
+              ${book.readers && book.readers.length ? `
+                <span class="flex items-center gap-1">
+                  👤 ${book.readers.map(r => this.escapeHtml(r)).join(', ')}
+                </span>
+              ` : ''}
+              ${book.dateRead ? `<span>📅 ${book.dateRead}</span>` : ''}
+              ${book.rating ? `<span>${'⭐'.repeat(book.rating)}</span>` : ''}
+            </div>
             
-            if (index !== -1) {
-              // Create new array to trigger state change notification
-              const updatedBooks = books.map((b, i) => 
-                i === index ? { ...b, ...data, readers: selectedReaders, updatedAt: new Date().toISOString() } : b
-              );
-              appState.set('books', updatedBooks);
-              
-              // Add any new readers to the global readers list
-              const currentReaders = appState.get('readers') || [];
-              const newReaders = selectedReaders.filter(r => !currentReaders.includes(r));
-              if (newReaders.length > 0) {
-                appState.set('readers', [...currentReaders, ...newReaders]);
-                updateReadersFilter();
-              }
-              
-              await saveData();
-              renderStats();
-              
-              toast.success('Book updated!');
-              modal.close();
-            }
-          }
-        }
-      }
-    ]
-  });
-};
-
-window.deleteBook = async function(id) {
-  const books = appState.get('books') || [];
-  const book = books.find(b => b.id === id);
-  
-  if (!book) return;
-  
-  const confirmed = await modal.confirm(
-    `Are you sure you want to delete "${book.title}"?`,
-    'Delete Book'
-  );
-  
-  if (confirmed) {
-    const filtered = books.filter(b => b.id !== id);
-    appState.set('books', filtered);
-    await saveData();
-    renderStats();
-    toast.success('Book deleted');
-  }
-};
-
-function showSetupScreen() {
-  const container = document.querySelector('main');
-  container.innerHTML = `
-    <div class="max-w-md mx-auto">
-      <div class="bg-white rounded-lg shadow-md p-6">
-        <h2 class="text-2xl font-bold text-gray-900 mb-4">Setup GitHub Sync</h2>
-        <p class="text-gray-600 mb-6">Enter your GitHub details to enable data synchronization.</p>
-        
-        <form id="setup-form">
-          <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700 mb-2">GitHub Personal Access Token</label>
-            <input type="password" name="token" required class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="ghp_..." />
-            <p class="text-xs text-gray-500 mt-1">
-              <a href="https://github.com/settings/tokens/new" target="_blank" class="text-purple-600 hover:underline">Create a token</a> with 'repo' scope
-            </p>
+            ${book.notes ? `
+              <p class="mt-2 text-sm text-gray-600 italic">"${this.escapeHtml(book.notes)}"</p>
+            ` : ''}
           </div>
-          <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700 mb-2">GitHub Username</label>
-            <input type="text" name="owner" required value="${CONFIG.github.owner}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500" />
+          
+          <div class="flex gap-1 ml-4">
+            <button onclick="app.editBook('${book.id}')" 
+              class="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded transition"
+              title="Edit">✏️</button>
+            <button onclick="app.deleteBook('${book.id}')" 
+              class="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition"
+              title="Delete">🗑️</button>
           </div>
-          <div class="mb-6">
-            <label class="block text-sm font-medium text-gray-700 mb-2">Repository Name</label>
-            <input type="text" name="repo" required value="${CONFIG.github.repo}" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500" />
-          </div>
-          <button type="submit" class="w-full px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500">
-            Connect to GitHub
-          </button>
-        </form>
+        </div>
       </div>
-    </div>
-  `;
-  
-  FormHelper.onSubmit('#setup-form', async (data) => {
-    try {
-      console.log('[Setup] Starting GitHub connection test...');
-      console.log('[Setup] Owner:', data.owner);
-      console.log('[Setup] Repo:', data.repo);
-      console.log('[Setup] Token length:', data.token ? data.token.length : 0);
-      
-      const testGithub = new GitHubSync({ token: data.token, owner: data.owner, repo: data.repo });
-      
-      const authTest = await testGithub.testAuth();
-      console.log('[Setup] Auth test result:', authTest);
-      
-      if (!authTest.success) {
-        toast.error(`GitHub authentication failed: ${authTest.error}`);
-        return;
-      }
-      
-      const repoTest = await testGithub.validateRepo();
-      console.log('[Setup] Repo test result:', repoTest);
-      
-      if (!repoTest.success) {
-        toast.error(`Cannot access repository: ${repoTest.error}`);
-        return;
-      }
-      
-      storage.saveSetting('githubToken', data.token);
-      storage.saveSetting('githubOwner', data.owner);
-      storage.saveSetting('githubRepo', data.repo);
-      
-      await setupGitHubSync(data.token, data.owner, data.repo);
-      appState.set('isSetup', true);
-      
-      toast.success('GitHub sync configured!');
-      
-      // Reload page to show main interface
-      location.reload();
-      
-    } catch (error) {
-      console.error('[Setup] Error:', error);
-      toast.error(`Setup failed: ${error.message}`);
-    }
-  });
-}
+    `).join('');
+  }
 
-function setupEventListeners() {
-  document.getElementById('add-book-btn').addEventListener('click', showAddBookModal);
-  
-  document.getElementById('sync-btn').addEventListener('click', async () => {
-    if (syncController) {
-      await syncController.sync();
-    } else {
-      toast.warning('GitHub sync not configured');
-    }
-  });
-  
-  document.getElementById('settings-btn').addEventListener('click', showSettings);
-  
-  document.getElementById('search-input').addEventListener('input', (e) => {
-    appState.set('searchQuery', e.target.value);
-  });
-  
-  document.getElementById('reader-filter').addEventListener('change', (e) => {
-    appState.set('readerFilter', e.target.value);
-  });
-  
-  document.getElementById('sort-select').addEventListener('change', (e) => {
-    appState.set('sortBy', e.target.value);
-  });
-}
+  updateStats() {
+    const now = new Date();
+    const thisYear = now.getFullYear();
+    const thisMonth = now.getMonth();
+    
+    const booksThisYear = this.books.filter(b => {
+      if (!b.dateRead) return false;
+      return new Date(b.dateRead).getFullYear() === thisYear;
+    });
+    
+    const booksThisMonth = booksThisYear.filter(b => {
+      return new Date(b.dateRead).getMonth() === thisMonth;
+    });
+    
+    const uniqueReaders = new Set();
+    this.books.forEach(b => (b.readers || []).forEach(r => uniqueReaders.add(r)));
+    
+    document.getElementById('stat-total').textContent = this.books.length;
+    document.getElementById('stat-year').textContent = booksThisYear.length;
+    document.getElementById('stat-month').textContent = booksThisMonth.length;
+    document.getElementById('stat-readers').textContent = uniqueReaders.size;
+  }
 
-function showSettings() {
-  const token = storage.loadSetting('githubToken');
-  const owner = storage.loadSetting('githubOwner');
-  const repo = storage.loadSetting('githubRepo');
-  
-  modal.show({
-    title: 'Settings',
-    content: `
-      <div class="space-y-4">
-        <div>
-          <p class="text-sm font-medium text-gray-700">GitHub Owner</p>
-          <p class="text-gray-900">${owner || 'Not configured'}</p>
-        </div>
-        <div>
-          <p class="text-sm font-medium text-gray-700">Repository</p>
-          <p class="text-gray-900">${repo || 'Not configured'}</p>
-        </div>
-        <div>
-          <p class="text-sm font-medium text-gray-700">Token</p>
-          <p class="text-gray-900">${token ? '••••••••' : 'Not configured'}</p>
-        </div>
-        ${syncController ? `
-        <div>
-          <p class="text-sm font-medium text-gray-700">Last Sync</p>
-          <p class="text-gray-900">${syncController.lastSyncTime ? syncController.lastSyncTime.toLocaleString() : 'Never'}</p>
-        </div>
-        ` : ''}
-      </div>
-    `,
-    buttons: [
-      {
-        text: 'Reconfigure',
-        onClick: () => {
-          modal.close();
-          storage.clearSettings();
-          location.reload();
-        }
-      },
-      { text: 'Close', primary: true, onClick: () => modal.close() }
-    ]
-  });
-}
+  // ============================================================
+  // UTILITIES
+  // ============================================================
 
-function updateSyncButton(syncing) {
-  const btn = document.getElementById('sync-btn');
-  const icon = document.getElementById('sync-icon');
-  const text = document.getElementById('sync-text');
-  
-  if (syncing) {
-    btn.disabled = true;
-    icon.textContent = '⏳';
-    text.textContent = 'Syncing...';
-  } else {
-    btn.disabled = false;
-    icon.textContent = '🔄';
-    text.textContent = 'Sync';
+  generateId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+  }
+
+  escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
   }
 }
 
-function setupOfflineIndicator() {
-  const indicator = document.getElementById('offline-indicator');
-  
-  function updateOnlineStatus() {
-    indicator.classList.toggle('show', !navigator.onLine);
-  }
-  
-  window.addEventListener('online', updateOnlineStatus);
-  window.addEventListener('offline', updateOnlineStatus);
-  updateOnlineStatus();
-}
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initApp);
-} else {
-  initApp();
-}
+// Initialize app
+let app;
+document.addEventListener('DOMContentLoaded', async () => {
+  app = new ReadingLogApp();
+  await app.init();
+});

@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Local-First Framework Tests</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f3f4f6;
+      padding: 2rem;
+      line-height: 1.5;
+    }
+    
+    h1 {
+      font-size: 1.5rem;
+      color: #111827;
+      margin-bottom: 1rem;
+    }
+    
+    .controls {
+      margin-bottom: 1.5rem;
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+    
+    button {
+      padding: 0.5rem 1rem;
+      font-size: 0.875rem;
+      border: none;
+      border-radius: 0.375rem;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    
+    .btn-primary {
+      background: #3B82F6;
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background: #2563EB;
+    }
+    
+    .btn-secondary {
+      background: #E5E7EB;
+      color: #374151;
+    }
+    
+    .btn-secondary:hover {
+      background: #D1D5DB;
+    }
+    
+    .summary {
+      background: white;
+      padding: 1rem 1.5rem;
+      border-radius: 0.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      display: flex;
+      gap: 2rem;
+    }
+    
+    .stat {
+      text-align: center;
+    }
+    
+    .stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+    }
+    
+    .stat-label {
+      font-size: 0.75rem;
+      color: #6B7280;
+      text-transform: uppercase;
+    }
+    
+    .stat-pass .stat-value { color: #10B981; }
+    .stat-fail .stat-value { color: #EF4444; }
+    .stat-skip .stat-value { color: #F59E0B; }
+    .stat-total .stat-value { color: #3B82F6; }
+    
+    .suite {
+      background: white;
+      border-radius: 0.5rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    
+    .suite-header {
+      padding: 1rem 1.5rem;
+      background: #F9FAFB;
+      border-bottom: 1px solid #E5E7EB;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      cursor: pointer;
+    }
+    
+    .suite-header:hover {
+      background: #F3F4F6;
+    }
+    
+    .suite-icon {
+      font-size: 1rem;
+    }
+    
+    .suite-name {
+      font-weight: 600;
+      color: #111827;
+      flex: 1;
+    }
+    
+    .suite-stats {
+      font-size: 0.875rem;
+      color: #6B7280;
+    }
+    
+    .suite-body {
+      padding: 0;
+    }
+    
+    .suite.collapsed .suite-body {
+      display: none;
+    }
+    
+    .test {
+      padding: 0.75rem 1.5rem;
+      border-bottom: 1px solid #F3F4F6;
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+    }
+    
+    .test:last-child {
+      border-bottom: none;
+    }
+    
+    .test-icon {
+      flex-shrink: 0;
+      font-size: 1rem;
+    }
+    
+    .test-name {
+      flex: 1;
+      color: #374151;
+    }
+    
+    .test-time {
+      font-size: 0.75rem;
+      color: #9CA3AF;
+    }
+    
+    .test.pass .test-icon { color: #10B981; }
+    .test.fail .test-icon { color: #EF4444; }
+    .test.skip .test-icon { color: #F59E0B; }
+    .test.running .test-icon { color: #3B82F6; }
+    
+    .test-error {
+      margin-top: 0.5rem;
+      padding: 0.75rem;
+      background: #FEF2F2;
+      border: 1px solid #FECACA;
+      border-radius: 0.375rem;
+      font-family: monospace;
+      font-size: 0.8125rem;
+      color: #991B1B;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    
+    .console-output {
+      margin-top: 1.5rem;
+      background: #1F2937;
+      color: #F9FAFB;
+      padding: 1rem;
+      border-radius: 0.5rem;
+      font-family: monospace;
+      font-size: 0.8125rem;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    
+    .console-line {
+      padding: 0.25rem 0;
+    }
+    
+    .console-log { color: #F9FAFB; }
+    .console-info { color: #60A5FA; }
+    .console-warn { color: #FBBF24; }
+    .console-error { color: #F87171; }
+    
+    .loading {
+      display: inline-block;
+      width: 1rem;
+      height: 1rem;
+      border: 2px solid #E5E7EB;
+      border-top-color: #3B82F6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <h1>🧪 Local-First Framework Tests</h1>
+  
+  <div class="controls">
+    <button class="btn-primary" id="run-all-btn">Run All Tests</button>
+    <button class="btn-secondary" id="clear-btn">Clear Results</button>
+    <span id="status"></span>
+  </div>
+  
+  <div class="summary" id="summary" style="display: none;">
+    <div class="stat stat-pass">
+      <div class="stat-value" id="pass-count">0</div>
+      <div class="stat-label">Passed</div>
+    </div>
+    <div class="stat stat-fail">
+      <div class="stat-value" id="fail-count">0</div>
+      <div class="stat-label">Failed</div>
+    </div>
+    <div class="stat stat-skip">
+      <div class="stat-value" id="skip-count">0</div>
+      <div class="stat-label">Skipped</div>
+    </div>
+    <div class="stat stat-total">
+      <div class="stat-value" id="total-count">0</div>
+      <div class="stat-label">Total</div>
+    </div>
+  </div>
+  
+  <div id="results"></div>
+  
+  <div class="console-output" id="console-output">
+    <div class="console-line console-info">Console output will appear here...</div>
+  </div>
+
+  <!-- Test Framework -->
+  <script>
+    /**
+     * Browser-Native Test Suite
+     * Zero dependencies test framework for local-first apps
+     */
+    const TestSuite = {
+      suites: [],
+      currentSuite: null,
+      results: {
+        pass: 0,
+        fail: 0,
+        skip: 0,
+        total: 0
+      },
+      consoleOutput: [],
+      
+      /**
+       * Define a test suite
+       */
+      describe(name, fn) {
+        const parentSuite = this.currentSuite;
+        
+        const suite = {
+          name: parentSuite ? `${parentSuite.name} > ${name}` : name,
+          tests: [],
+          beforeEach: null,
+          afterEach: null,
+          beforeAll: null,
+          afterAll: null,
+          parentBeforeEach: parentSuite ? parentSuite.beforeEach : null,
+          parentAfterEach: parentSuite ? parentSuite.afterEach : null
+        };
+        
+        this.suites.push(suite);
+        this.currentSuite = suite;
+        
+        fn();
+        
+        // Restore parent suite context (for nested describes)
+        this.currentSuite = parentSuite;
+      },
+      
+      /**
+       * Define a test case
+       */
+      it(name, fn) {
+        if (!this.currentSuite) {
+          throw new Error('it() must be called inside describe()');
+        }
+        
+        this.currentSuite.tests.push({
+          name,
+          fn,
+          status: 'pending',
+          error: null,
+          time: 0
+        });
+      },
+      
+      /**
+       * Skip a test
+       */
+      skip(name, fn) {
+        if (!this.currentSuite) {
+          throw new Error('skip() must be called inside describe()');
+        }
+        
+        this.currentSuite.tests.push({
+          name,
+          fn,
+          status: 'skip',
+          error: null,
+          time: 0
+        });
+      },
+      
+      /**
+       * Setup before each test
+       */
+      beforeEach(fn) {
+        if (this.currentSuite) {
+          // Wrap to also call parent's beforeEach
+          const parentBefore = this.currentSuite.parentBeforeEach;
+          this.currentSuite.beforeEach = parentBefore 
+            ? async () => { await parentBefore(); await fn(); }
+            : fn;
+          // Also set as parent for nested describes
+          this.currentSuite.parentBeforeEach = this.currentSuite.beforeEach;
+        }
+      },
+      
+      /**
+       * Cleanup after each test
+       */
+      afterEach(fn) {
+        if (this.currentSuite) {
+          // Wrap to also call parent's afterEach
+          const parentAfter = this.currentSuite.parentAfterEach;
+          this.currentSuite.afterEach = parentAfter
+            ? async () => { await fn(); await parentAfter(); }
+            : fn;
+          // Also set as parent for nested describes
+          this.currentSuite.parentAfterEach = this.currentSuite.afterEach;
+        }
+      },
+      
+      /**
+       * Setup before all tests in suite
+       */
+      beforeAll(fn) {
+        if (this.currentSuite) {
+          this.currentSuite.beforeAll = fn;
+        }
+      },
+      
+      /**
+       * Cleanup after all tests in suite
+       */
+      afterAll(fn) {
+        if (this.currentSuite) {
+          this.currentSuite.afterAll = fn;
+        }
+      },
+      
+      // --- Assertions ---
+      
+      assertEqual(actual, expected, message = '') {
+        if (actual !== expected) {
+          throw new Error(
+            `${message ? message + ': ' : ''}Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
+          );
+        }
+      },
+      
+      assertNotEqual(actual, expected, message = '') {
+        if (actual === expected) {
+          throw new Error(
+            `${message ? message + ': ' : ''}Expected values to be different, but both were ${JSON.stringify(actual)}`
+          );
+        }
+      },
+      
+      assertTrue(value, message = '') {
+        if (value !== true) {
+          throw new Error(`${message ? message + ': ' : ''}Expected true, got ${JSON.stringify(value)}`);
+        }
+      },
+      
+      assertFalse(value, message = '') {
+        if (value !== false) {
+          throw new Error(`${message ? message + ': ' : ''}Expected false, got ${JSON.stringify(value)}`);
+        }
+      },
+      
+      assertNull(value, message = '') {
+        if (value !== null) {
+          throw new Error(`${message ? message + ': ' : ''}Expected null, got ${JSON.stringify(value)}`);
+        }
+      },
+      
+      assertNotNull(value, message = '') {
+        if (value === null) {
+          throw new Error(`${message ? message + ': ' : ''}Expected non-null value`);
+        }
+      },
+      
+      assertUndefined(value, message = '') {
+        if (value !== undefined) {
+          throw new Error(`${message ? message + ': ' : ''}Expected undefined, got ${JSON.stringify(value)}`);
+        }
+      },
+      
+      assertDefined(value, message = '') {
+        if (value === undefined) {
+          throw new Error(`${message ? message + ': ' : ''}Expected defined value`);
+        }
+      },
+      
+      assertDeepEqual(actual, expected, message = '') {
+        const actualStr = JSON.stringify(actual);
+        const expectedStr = JSON.stringify(expected);
+        
+        if (actualStr !== expectedStr) {
+          throw new Error(
+            `${message ? message + ': ' : ''}Deep equality failed.\nExpected: ${expectedStr}\nActual: ${actualStr}`
+          );
+        }
+      },
+      
+      assertThrows(fn, expectedError = null, message = '') {
+        let threw = false;
+        let error = null;
+        
+        try {
+          fn();
+        } catch (e) {
+          threw = true;
+          error = e;
+        }
+        
+        if (!threw) {
+          throw new Error(`${message ? message + ': ' : ''}Expected function to throw`);
+        }
+        
+        if (expectedError && !error.message.includes(expectedError)) {
+          throw new Error(
+            `${message ? message + ': ' : ''}Expected error containing "${expectedError}", got "${error.message}"`
+          );
+        }
+      },
+      
+      async assertThrowsAsync(fn, expectedError = null, message = '') {
+        let threw = false;
+        let error = null;
+        
+        try {
+          await fn();
+        } catch (e) {
+          threw = true;
+          error = e;
+        }
+        
+        if (!threw) {
+          throw new Error(`${message ? message + ': ' : ''}Expected async function to throw`);
+        }
+        
+        if (expectedError && !error.message.includes(expectedError)) {
+          throw new Error(
+            `${message ? message + ': ' : ''}Expected error containing "${expectedError}", got "${error.message}"`
+          );
+        }
+      },
+      
+      assertArrayContains(array, item, message = '') {
+        if (!Array.isArray(array)) {
+          throw new Error(`${message ? message + ': ' : ''}Expected an array`);
+        }
+        
+        if (!array.includes(item)) {
+          throw new Error(
+            `${message ? message + ': ' : ''}Array does not contain ${JSON.stringify(item)}`
+          );
+        }
+      },
+      
+      assertArrayLength(array, length, message = '') {
+        if (!Array.isArray(array)) {
+          throw new Error(`${message ? message + ': ' : ''}Expected an array`);
+        }
+        
+        if (array.length !== length) {
+          throw new Error(
+            `${message ? message + ': ' : ''}Expected array length ${length}, got ${array.length}`
+          );
+        }
+      },
+      
+      assertInstanceOf(value, constructor, message = '') {
+        if (!(value instanceof constructor)) {
+          throw new Error(
+            `${message ? message + ': ' : ''}Expected instance of ${constructor.name}`
+          );
+        }
+      },
+      
+      assertTypeOf(value, type, message = '') {
+        if (typeof value !== type) {
+          throw new Error(
+            `${message ? message + ': ' : ''}Expected typeof ${type}, got ${typeof value}`
+          );
+        }
+      },
+      
+      // --- Test Runner ---
+      
+      async runAll() {
+        this.results = { pass: 0, fail: 0, skip: 0, total: 0 };
+        this.consoleOutput = [];
+        
+        this._interceptConsole();
+        
+        for (const suite of this.suites) {
+          await this._runSuite(suite);
+        }
+        
+        this._restoreConsole();
+        this._updateUI();
+        
+        return this.results;
+      },
+      
+      async _runSuite(suite) {
+        this._log('info', `Running suite: ${suite.name}`);
+        
+        // Use inherited beforeEach/afterEach if own is not set
+        const beforeEachFn = suite.beforeEach || suite.parentBeforeEach;
+        const afterEachFn = suite.afterEach || suite.parentAfterEach;
+        
+        try {
+          if (suite.beforeAll) {
+            await suite.beforeAll();
+          }
+          
+          for (const test of suite.tests) {
+            this.results.total++;
+            
+            if (test.status === 'skip') {
+              this.results.skip++;
+              this._log('warn', `  ⏭ SKIP: ${test.name}`);
+              continue;
+            }
+            
+            test.status = 'running';
+            this._updateTestUI(suite, test);
+            
+            const startTime = performance.now();
+            
+            try {
+              if (beforeEachFn) {
+                await beforeEachFn();
+              }
+              
+              await test.fn();
+              
+              if (afterEachFn) {
+                await afterEachFn();
+              }
+              
+              test.status = 'pass';
+              test.time = performance.now() - startTime;
+              this.results.pass++;
+              this._log('log', `  ✓ PASS: ${test.name} (${test.time.toFixed(1)}ms)`);
+              
+            } catch (error) {
+              test.status = 'fail';
+              test.time = performance.now() - startTime;
+              test.error = error.message;
+              this.results.fail++;
+              this._log('error', `  ✗ FAIL: ${test.name}`);
+              this._log('error', `    ${error.message}`);
+            }
+            
+            this._updateTestUI(suite, test);
+          }
+          
+          if (suite.afterAll) {
+            await suite.afterAll();
+          }
+          
+        } catch (error) {
+          this._log('error', `Suite "${suite.name}" setup/teardown error: ${error.message}`);
+        }
+      },
+      
+      // --- Console Interception ---
+      
+      _originalConsole: {},
+      
+      _interceptConsole() {
+        ['log', 'info', 'warn', 'error'].forEach(method => {
+          this._originalConsole[method] = console[method];
+          console[method] = (...args) => {
+            this._log(method, args.map(a => 
+              typeof a === 'object' ? JSON.stringify(a) : String(a)
+            ).join(' '));
+            this._originalConsole[method].apply(console, args);
+          };
+        });
+      },
+      
+      _restoreConsole() {
+        Object.entries(this._originalConsole).forEach(([method, fn]) => {
+          console[method] = fn;
+        });
+      },
+      
+      _log(type, message) {
+        this.consoleOutput.push({ type, message, time: new Date() });
+        this._updateConsoleUI();
+      },
+      
+      // --- UI Updates ---
+      
+      _updateUI() {
+        document.getElementById('pass-count').textContent = this.results.pass;
+        document.getElementById('fail-count').textContent = this.results.fail;
+        document.getElementById('skip-count').textContent = this.results.skip;
+        document.getElementById('total-count').textContent = this.results.total;
+        document.getElementById('summary').style.display = 'flex';
+        document.getElementById('status').textContent = 
+          this.results.fail > 0 ? '❌ Tests failed' : '✅ All tests passed';
+      },
+      
+      _updateConsoleUI() {
+        const container = document.getElementById('console-output');
+        container.innerHTML = this.consoleOutput.map(entry => 
+          `<div class="console-line console-${entry.type}">${this._escapeHtml(entry.message)}</div>`
+        ).join('');
+        container.scrollTop = container.scrollHeight;
+      },
+      
+      _updateTestUI(suite, test) {
+        let suiteEl = document.querySelector(`[data-suite="${suite.name}"]`);
+        
+        if (!suiteEl) {
+          suiteEl = document.createElement('div');
+          suiteEl.className = 'suite';
+          suiteEl.dataset.suite = suite.name;
+          suiteEl.innerHTML = `
+            <div class="suite-header">
+              <span class="suite-icon">📦</span>
+              <span class="suite-name">${this._escapeHtml(suite.name)}</span>
+              <span class="suite-stats"></span>
+            </div>
+            <div class="suite-body"></div>
+          `;
+          
+          suiteEl.querySelector('.suite-header').addEventListener('click', () => {
+            suiteEl.classList.toggle('collapsed');
+          });
+          
+          document.getElementById('results').appendChild(suiteEl);
+        }
+        
+        const body = suiteEl.querySelector('.suite-body');
+        let testEl = body.querySelector(`[data-test="${test.name}"]`);
+        
+        if (!testEl) {
+          testEl = document.createElement('div');
+          testEl.className = 'test';
+          testEl.dataset.test = test.name;
+          body.appendChild(testEl);
+        }
+        
+        const icons = { pass: '✓', fail: '✗', skip: '⏭', running: '⏳', pending: '○' };
+        
+        testEl.className = `test ${test.status}`;
+        testEl.innerHTML = `
+          <span class="test-icon">${icons[test.status] || '○'}</span>
+          <div class="test-content">
+            <div class="test-name">${this._escapeHtml(test.name)}</div>
+            ${test.error ? `<div class="test-error">${this._escapeHtml(test.error)}</div>` : ''}
+          </div>
+          ${test.time ? `<span class="test-time">${test.time.toFixed(1)}ms</span>` : ''}
+        `;
+        
+        // Update suite stats
+        const pass = suite.tests.filter(t => t.status === 'pass').length;
+        const fail = suite.tests.filter(t => t.status === 'fail').length;
+        suiteEl.querySelector('.suite-stats').textContent = `${pass}/${suite.tests.length} passed`;
+      },
+      
+      _escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+      },
+      
+      clear() {
+        this.suites = [];
+        this.results = { pass: 0, fail: 0, skip: 0, total: 0 };
+        this.consoleOutput = [];
+        document.getElementById('results').innerHTML = '';
+        document.getElementById('summary').style.display = 'none';
+        document.getElementById('status').textContent = '';
+        document.getElementById('console-output').innerHTML = 
+          '<div class="console-line console-info">Console output will appear here...</div>';
+      }
+    };
+    
+    // Convenience aliases
+    const describe = TestSuite.describe.bind(TestSuite);
+    const it = TestSuite.it.bind(TestSuite);
+    const skip = TestSuite.skip.bind(TestSuite);
+    const beforeEach = TestSuite.beforeEach.bind(TestSuite);
+    const afterEach = TestSuite.afterEach.bind(TestSuite);
+    const beforeAll = TestSuite.beforeAll.bind(TestSuite);
+    const afterAll = TestSuite.afterAll.bind(TestSuite);
+    const expect = {
+      equal: TestSuite.assertEqual.bind(TestSuite),
+      notEqual: TestSuite.assertNotEqual.bind(TestSuite),
+      true: TestSuite.assertTrue.bind(TestSuite),
+      false: TestSuite.assertFalse.bind(TestSuite),
+      null: TestSuite.assertNull.bind(TestSuite),
+      notNull: TestSuite.assertNotNull.bind(TestSuite),
+      undefined: TestSuite.assertUndefined.bind(TestSuite),
+      defined: TestSuite.assertDefined.bind(TestSuite),
+      deepEqual: TestSuite.assertDeepEqual.bind(TestSuite),
+      throws: TestSuite.assertThrows.bind(TestSuite),
+      throwsAsync: TestSuite.assertThrowsAsync.bind(TestSuite),
+      contains: TestSuite.assertArrayContains.bind(TestSuite),
+      length: TestSuite.assertArrayLength.bind(TestSuite),
+      instanceOf: TestSuite.assertInstanceOf.bind(TestSuite),
+      typeOf: TestSuite.assertTypeOf.bind(TestSuite)
+    };
+    
+    // Event handlers
+    document.getElementById('run-all-btn').addEventListener('click', async () => {
+      document.getElementById('status').innerHTML = '<span class="loading"></span> Running tests...';
+      await TestSuite.runAll();
+    });
+    
+    document.getElementById('clear-btn').addEventListener('click', () => {
+      TestSuite.clear();
+    });
+  </script>
+
+  <!-- Core Framework Scripts -->
+  <script src="../core/Storage.js"></script>
+  <script src="../core/State.js"></script>
+  <script src="../core/GitHubSync.js"></script>
+  <script src="../core/SyncController.js"></script>
+  <script src="../core/ui/Toast.js"></script>
+  <script src="../core/ui/Modal.js"></script>
+  <script src="../core/ui/Form.js"></script>
+  <script src="../core/ui/List.js"></script>
+  <script src="../core/App.js"></script>
+
+  <!-- Test Files -->
+  <script src="core/storage.test.js"></script>
+  <script src="core/state.test.js"></script>
+  <script src="core/sync-controller.test.js"></script>
+  <script src="core/github-sync.test.js"></script>
+</body>
+</html>

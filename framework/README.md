@@ -1,81 +1,261 @@
-# Framework Core
+# Local-First Framework
 
-This directory contains the core modules that power all local-first apps.
+A minimal, dependency-free framework for building local-first web applications with GitHub sync.
 
-## Core Modules
+**Goals:**
+- 20+ year maintainability (no npm, no build tools)
+- Works offline, syncs when online
+- User owns their data (stored in their GitHub repo)
+- AI-agent friendly (consistent patterns, clear structure)
 
-### `core/github-sync.js`
-Handles all GitHub API interactions:
-- Authentication with Personal Access Token
-- Reading/writing files to repository
-- Rate limiting and error handling
-- ETag-based conditional requests
+## Quick Start
 
-### `core/local-storage.js`
-Local data persistence:
-- IndexedDB wrapper for structured data
-- localStorage for settings and tokens
-- Automatic serialization/deserialization
-- Data migration utilities
+1. Copy `templates/` to `examples/your-app/`
+2. Rename `MyApp` class and update config in `app.js`
+3. Implement `onDataLoaded()` and `getData()`
+4. Open `index.html` in a browser
 
-### `core/sync-controller.js`
-Orchestrates synchronization:
-- Online/offline detection
-- Background sync scheduling
-- Conflict detection and resolution
-- Sync queue management
+## Architecture
 
-### `core/router.js`
-Client-side routing:
-- Hash-based navigation
-- Route parameter extraction
-- Navigation guards
-- History management
-
-### `core/state.js`
-State management:
-- Simple reactive state
-- Event-driven updates
-- Computed properties
-- State persistence
-
-### `core/components/`
-Reusable UI components:
-- **form.js** - Form helpers and validation
-- **list.js** - List rendering and filtering
-- **modal.js** - Modal dialogs
-- **toast.js** - Toast notifications
-
-## Using the Framework
-
-Import the modules you need in your app:
-
-```html
-<script src="../../framework/core/github-sync.js"></script>
-<script src="../../framework/core/local-storage.js"></script>
-<script src="../../framework/core/sync-controller.js"></script>
-<script src="../../framework/core/state.js"></script>
-<script src="../../framework/core/router.js"></script>
+```
+framework/
+├── core/                    # Core modules
+│   ├── App.js               # Base app class (extend this!)
+│   ├── Storage.js           # IndexedDB with localStorage fallback
+│   ├── GitHubSync.js        # GitHub API wrapper
+│   ├── SyncController.js    # Sync orchestration
+│   ├── State.js             # Reactive state management
+│   └── ui/                  # UI components
+│       ├── Toast.js         # Toast notifications
+│       ├── Modal.js         # Modal dialogs
+│       ├── Form.js          # Form helpers
+│       └── List.js          # List rendering helpers
+├── styles/
+│   └── core.css             # Shared styles (toast, modal, etc.)
+├── examples/
+│   ├── reference-app/       # Full-featured example
+│   ├── reading-log/         # Book tracking app
+│   ├── goal-tracker/        # Goals with lead/lag measures
+│   └── meal-planner/        # Weekly meal planning
+├── templates/               # Starter template
+└── tests/
+    └── test-harness.html    # Browser-native tests
 ```
 
-Then use them in your app logic:
+## Creating a New App
+
+### 1. Extend the App Class
 
 ```javascript
-// Initialize storage
-const storage = new LocalStorage('my-app');
+class MyApp extends App {
+  constructor() {
+    super({
+      appName: 'my-app',                    // Unique identifier
+      dataPath: 'apps/my-app/data.json',    // Path in GitHub repo
+      initialState: {
+        items: []                            // Your app's initial state
+      }
+    });
+  }
 
-// Setup GitHub sync
-const github = new GitHubSync({
-  token: userToken,
-  repo: 'username/family-data',
-  path: 'apps/my-app/data.json'
-});
+  // Called after initialization
+  async onInit() {
+    this.state.subscribe('items', () => this.render());
+    this.setupEventHandlers();
+  }
 
-// Create sync controller
-const sync = new SyncController(storage, github);
+  // Called when data loads (local or remote)
+  onDataLoaded(data, source) {
+    this.state.set('items', data.items || []);
+    this.render();
+  }
 
-// Start syncing
-sync.start();
+  // Returns data to be saved
+  getData() {
+    return { items: this.state.get('items') };
+  }
+}
 ```
 
-See example apps for complete implementations.
+### 2. Initialize
+
+```javascript
+let app;
+document.addEventListener('DOMContentLoaded', async () => {
+  app = new MyApp();
+  await app.init();
+});
+```
+
+### 3. Save Data
+
+```javascript
+// Modify state
+this.state.set('items', [...items, newItem]);
+
+// Save and trigger sync
+await this.saveData();
+```
+
+## Core API
+
+### App (Base Class)
+
+| Method | Description |
+|--------|-------------|
+| `init()` | Initialize app, load data, setup sync |
+| `saveData()` | Save to local storage and sync |
+| `sync()` | Manually trigger sync |
+| `showSetupScreen()` | Show GitHub configuration UI |
+| `showSettings()` | Show settings modal |
+
+**Override these:**
+- `onInit()` - Setup subscriptions and handlers
+- `onDataLoaded(data, source)` - Handle loaded data
+- `getData()` - Return data to save
+- `onSyncComplete(results)` - Handle sync completion (optional)
+- `onSyncError(error)` - Handle sync errors (optional)
+
+### State
+
+```javascript
+// Get/set values
+this.state.get('items')
+this.state.set('items', [...])
+this.state.set({ a: 1, b: 2 })
+
+// Subscribe to changes
+const unsubscribe = this.state.subscribe('items', (newValue) => {
+  this.render();
+});
+
+// Update nested objects
+this.state.update('config', { theme: 'dark' });
+```
+
+### Storage
+
+```javascript
+// Data operations
+await storage.save('key', data, { synced: false, githubPath: 'path/to/file.json' });
+await storage.load('key');
+await storage.delete('key');
+
+// Settings (localStorage, not synced)
+storage.saveSetting('theme', 'dark');
+storage.loadSetting('theme', 'light');
+
+// Shared settings (shared across all apps)
+storage.saveSharedSetting('githubToken', 'ghp_...');
+storage.loadSharedSetting('githubToken');
+```
+
+### Toast
+
+```javascript
+toast.success('Saved!');
+toast.error('Something went wrong');
+toast.warning('Are you sure?');
+toast.info('Syncing...');
+```
+
+### Modal
+
+```javascript
+// Custom modal
+modal.show({
+  title: 'My Modal',
+  content: '<p>HTML content here</p>',
+  buttons: [
+    { text: 'Cancel', onClick: () => modal.close() },
+    { text: 'Save', primary: true, onClick: () => { /* ... */ modal.close(); }}
+  ]
+});
+
+// Confirm dialog
+const confirmed = await modal.confirm('Delete this item?', 'Confirm');
+
+// Alert
+await modal.alert('Done!', 'Success');
+
+// Prompt
+const value = await modal.prompt('Enter name:', 'default');
+```
+
+### FormHelper
+
+```javascript
+// Get form data as object
+const data = FormHelper.getData('#my-form');
+
+// Set form values
+FormHelper.setData('#my-form', { name: 'John', email: 'john@example.com' });
+
+// Validate
+const { valid, errors } = FormHelper.validate('#my-form');
+
+// Reset
+FormHelper.reset('#my-form');
+```
+
+## Sync Behavior
+
+1. **On app open**: Loads local data first (instant), then fetches remote and merges
+2. **On save**: Saves locally, then syncs to GitHub
+3. **Conflict resolution**: Shows modal asking user to choose local, remote, or merge
+4. **Offline**: Works fully offline, syncs when connection restored
+
+## Testing
+
+Open `tests/test-harness.html` in a browser. Click "Run All Tests".
+
+To add tests:
+
+```javascript
+describe('MyFeature', () => {
+  beforeEach(() => { /* setup */ });
+  afterEach(() => { /* cleanup */ });
+
+  it('does something', () => {
+    expect.equal(actual, expected);
+    expect.true(value);
+    expect.deepEqual(obj1, obj2);
+  });
+
+  it('handles async', async () => {
+    const result = await asyncFunction();
+    expect.equal(result, expected);
+  });
+});
+```
+
+## File Structure for Apps
+
+```
+examples/my-app/
+├── index.html      # HTML with script includes
+├── app.js          # Your App class
+├── manifest.json   # PWA manifest
+└── sw.js           # Service worker for offline
+```
+
+## Design Principles
+
+1. **No build step** - Just HTML, CSS, JS files
+2. **No dependencies** - Everything is vanilla JS
+3. **Offline-first** - App works without internet
+4. **User data ownership** - Data stored in user's GitHub repo
+5. **Minimal boilerplate** - App class handles common patterns
+6. **Clear patterns** - AI agents can understand and extend
+
+## Browser Support
+
+Modern browsers with:
+- ES6+ JavaScript
+- IndexedDB
+- Fetch API
+- Service Workers (for offline)
+
+## License
+
+MIT

@@ -1,0 +1,689 @@
+/**
+ * Base Application Class
+ * Provides common functionality for local-first apps with GitHub sync
+ * 
+ * @example
+ * class MyApp extends App {
+ *   constructor() {
+ *     super({
+ *       appName: 'my-app',
+ *       dataPath: 'apps/my-app/data.json',
+ *       initialState: { items: [] }
+ *     });
+ *   }
+ *   
+ *   onDataLoaded(data) {
+ *     this.state.set('items', data.items || []);
+ *     this.render();
+ *   }
+ *   
+ *   getData() {
+ *     return { items: this.state.get('items') };
+ *   }
+ * }
+ */
+
+class App {
+  /**
+   * Create a new App instance
+   * @param {Object} config - App configuration
+   * @param {string} config.appName - Unique app identifier
+   * @param {string} config.dataPath - Path to data file in GitHub repo
+   * @param {Object} [config.initialState={}] - Initial state values
+   * @param {string} [config.branch='main'] - GitHub branch
+   * @param {number} [config.autoSyncInterval=60000] - Auto-sync interval in ms
+   */
+  constructor(config) {
+    this.config = {
+      appName: config.appName,
+      dataPath: config.dataPath,
+      branch: config.branch || 'main',
+      autoSyncInterval: config.autoSyncInterval || 60000
+    };
+    
+    this.storage = null;
+    this.github = null;
+    this.syncController = null;
+    this.state = new State(config.initialState || {});
+    
+    // Sync status
+    this.state.set({
+      isSetup: false,
+      isSyncing: false,
+      isOnline: navigator.onLine,
+      lastSyncTime: null,
+      syncError: null
+    });
+    
+    // Bind methods
+    this._onSyncStart = this._onSyncStart.bind(this);
+    this._onSyncComplete = this._onSyncComplete.bind(this);
+    this._onSyncError = this._onSyncError.bind(this);
+    this._onOnlineStatusChange = this._onOnlineStatusChange.bind(this);
+    this._onConflictDetected = this._onConflictDetected.bind(this);
+  }
+
+  /**
+   * Initialize the application
+   * Must be called after DOM is ready
+   */
+  async init() {
+    // Initialize storage
+    this.storage = new Storage(this.config.appName);
+    await this.storage.init();
+    
+    // Check for saved GitHub config
+    const token = this.storage.loadSharedSetting('githubToken');
+    const owner = this.storage.loadSharedSetting('githubOwner');
+    const repo = this.storage.loadSharedSetting('githubRepo');
+    
+    if (token && owner && repo) {
+      await this._setupGitHubSync(token, owner, repo);
+    }
+    
+    // Setup online/offline detection
+    this._setupOnlineDetection();
+    
+    // Setup offline indicator
+    this._setupOfflineIndicator();
+    
+    // Load data (local first, then sync from remote)
+    await this._loadDataWithSync();
+    
+    // Call subclass initialization
+    if (typeof this.onInit === 'function') {
+      await this.onInit();
+    }
+    
+    return this;
+  }
+
+  /**
+   * Setup GitHub sync with the provided credentials
+   * @param {string} token - GitHub personal access token
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   */
+  async _setupGitHubSync(token, owner, repo) {
+    this.github = new GitHubSync({
+      token,
+      owner,
+      repo,
+      branch: this.config.branch
+    });
+    
+    // Test authentication
+    const authResult = await this.github.testAuth();
+    if (!authResult.success) {
+      console.error('[App] GitHub auth failed:', authResult.error);
+      this._showToast('GitHub authentication failed', 'error');
+      return false;
+    }
+    
+    // Setup sync controller
+    this.syncController = new SyncController(this.storage, this.github, {
+      autoSyncInterval: this.config.autoSyncInterval,
+      conflictStrategy: 'manual' // We handle conflicts in the UI
+    });
+    
+    // Listen to sync events
+    this.syncController.on('syncStart', this._onSyncStart);
+    this.syncController.on('syncComplete', this._onSyncComplete);
+    this.syncController.on('syncError', this._onSyncError);
+    this.syncController.on('onlineStatusChange', this._onOnlineStatusChange);
+    this.syncController.on('conflictDetected', this._onConflictDetected);
+    
+    this.state.set('isSetup', true);
+    
+    // Start auto-sync
+    this.syncController.start();
+    
+    return true;
+  }
+
+  /**
+   * Load data - first from local storage, then sync from remote
+   */
+  async _loadDataWithSync() {
+    // Always load local data first for instant UI
+    const localRecord = await this.storage.loadRecord('appData');
+    
+    if (localRecord && localRecord.data) {
+      this._notifyDataLoaded(localRecord.data, 'local');
+    }
+    
+    // If we have sync set up and we're online, fetch remote data
+    if (this.syncController && navigator.onLine) {
+      try {
+        this.state.set('isSyncing', true);
+        this._updateSyncUI(true);
+        
+        // Force fresh read (no cache) to ensure we get latest data on page load
+        const remoteResult = await this.github.readFile(this.config.dataPath, { noCache: true });
+        
+        if (remoteResult && !remoteResult.notFound && remoteResult.content) {
+          // Check if remote is different from local
+          const localData = localRecord?.data;
+          const remoteData = remoteResult.content;
+          
+          if (this._hasChanges(localData, remoteData)) {
+            // Check for conflicts (unsynced local changes)
+            if (localRecord && !localRecord.synced) {
+              // We have unsynced local changes - conflict!
+              await this._handleConflict(localData, remoteData, remoteResult.sha);
+            } else {
+              // No local changes, just use remote data
+              await this.storage.save('appData', remoteData, {
+                synced: true,
+                sha: remoteResult.sha,
+                githubPath: this.config.dataPath
+              });
+              this._notifyDataLoaded(remoteData, 'remote');
+              this._showToast('Data loaded from GitHub', 'info');
+            }
+          }
+        }
+        
+        this.state.set('isSyncing', false);
+        this.state.set('lastSyncTime', new Date());
+        this._updateSyncUI(false);
+        
+      } catch (error) {
+        console.error('[App] Error loading remote data:', error);
+        this.state.set('isSyncing', false);
+        this._updateSyncUI(false);
+        // Continue with local data - we're offline-first
+      }
+    }
+    
+    // If no data at all, notify with empty object
+    if (!localRecord?.data) {
+      this._notifyDataLoaded({}, 'empty');
+    }
+  }
+
+  /**
+   * Check if two data objects are different
+   */
+  _hasChanges(local, remote) {
+    if (!local && !remote) return false;
+    if (!local || !remote) return true;
+    return JSON.stringify(local) !== JSON.stringify(remote);
+  }
+
+  /**
+   * Handle conflict between local and remote data
+   */
+  async _handleConflict(localData, remoteData, remoteSha) {
+    // Show conflict resolution modal
+    const resolution = await this._showConflictModal(localData, remoteData);
+    
+    if (resolution === 'local') {
+      // Keep local changes, upload to GitHub
+      await this.storage.save('appData', localData, {
+        synced: false,
+        sha: remoteSha, // Use remote SHA for the update
+        githubPath: this.config.dataPath
+      });
+      // Trigger sync to upload local changes
+      this.syncController.sync();
+      this._showToast('Kept local changes', 'info');
+    } else if (resolution === 'remote') {
+      // Use remote data, discard local changes
+      await this.storage.save('appData', remoteData, {
+        synced: true,
+        sha: remoteSha,
+        githubPath: this.config.dataPath
+      });
+      this._notifyDataLoaded(remoteData, 'remote');
+      this._showToast('Using changes from GitHub', 'info');
+    } else if (resolution === 'merge') {
+      // Attempt automatic merge
+      const merged = this.syncController.mergeData(localData, remoteData);
+      await this.storage.save('appData', merged, {
+        synced: false,
+        sha: remoteSha,
+        githubPath: this.config.dataPath
+      });
+      this._notifyDataLoaded(merged, 'merged');
+      this.syncController.sync();
+      this._showToast('Merged changes automatically', 'success');
+    }
+  }
+
+  /**
+   * Show conflict resolution modal
+   * @returns {Promise<'local'|'remote'|'merge'>}
+   */
+  async _showConflictModal(localData, remoteData) {
+    return new Promise((resolve) => {
+      const localSummary = this._summarizeData(localData);
+      const remoteSummary = this._summarizeData(remoteData);
+      
+      modal.show({
+        title: '⚠️ Sync Conflict Detected',
+        content: `
+          <p class="mb-4 text-gray-700">
+            Changes were made both locally and on GitHub. Which version do you want to keep?
+          </p>
+          <div class="grid grid-cols-2 gap-4 mb-4">
+            <div class="p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <h4 class="font-semibold text-blue-800 mb-2">📱 Local Version</h4>
+              <p class="text-sm text-blue-700">${localSummary}</p>
+            </div>
+            <div class="p-3 bg-green-50 rounded-lg border border-green-200">
+              <h4 class="font-semibold text-green-800 mb-2">☁️ GitHub Version</h4>
+              <p class="text-sm text-green-700">${remoteSummary}</p>
+            </div>
+          </div>
+        `,
+        buttons: [
+          {
+            text: 'Keep Local',
+            onClick: () => { modal.close(); resolve('local'); }
+          },
+          {
+            text: 'Use GitHub',
+            onClick: () => { modal.close(); resolve('remote'); }
+          },
+          {
+            text: 'Merge Both',
+            primary: true,
+            onClick: () => { modal.close(); resolve('merge'); }
+          }
+        ],
+        closeOnBackdrop: false,
+        closeOnEscape: false
+      });
+    });
+  }
+
+  /**
+   * Create a human-readable summary of data
+   */
+  _summarizeData(data) {
+    if (!data) return 'No data';
+    
+    const items = [];
+    for (const [key, value] of Object.entries(data)) {
+      if (Array.isArray(value)) {
+        items.push(`${value.length} ${key}`);
+      } else if (key === 'lastUpdated') {
+        items.push(`Updated: ${new Date(value).toLocaleString()}`);
+      }
+    }
+    return items.join('<br>') || 'Empty';
+  }
+
+  /**
+   * Notify that data was loaded
+   */
+  _notifyDataLoaded(data, source) {
+    if (typeof this.onDataLoaded === 'function') {
+      this.onDataLoaded(data, source);
+    }
+  }
+
+  /**
+   * Save data to local storage and trigger sync
+   */
+  async saveData() {
+    // Get data from subclass
+    if (typeof this.getData !== 'function') {
+      throw new Error('Subclass must implement getData() method');
+    }
+    
+    const data = this.getData();
+    data.lastUpdated = new Date().toISOString();
+    
+    await this.storage.save('appData', data, {
+      synced: false,
+      githubPath: this.config.dataPath
+    });
+    
+    // Trigger sync if online
+    if (this.syncController && navigator.onLine) {
+      setTimeout(() => this.syncController.sync(), 500);
+    }
+  }
+
+  /**
+   * Manually trigger sync (pull remote changes, then push local changes)
+   */
+  async sync() {
+    if (!this.syncController) {
+      this._showToast('GitHub sync not configured. Click Settings to set up.', 'warning');
+      return { status: 'not-configured' };
+    }
+    
+    if (!navigator.onLine) {
+      this._showToast('Cannot sync while offline', 'warning');
+      return { status: 'offline' };
+    }
+    
+    // Check if we have any local data to sync
+    const localRecord = await this.storage.loadRecord('appData');
+    
+    if (!localRecord || !localRecord.githubPath) {
+      // No local record with githubPath - try to pull from remote
+      console.log('[App] No local sync record, pulling from remote...');
+      await this._loadDataWithSync();
+      return { status: 'pulled-remote' };
+    }
+    
+    // Normal sync: pull first, then push
+    return this.syncController.sync({ pullFirst: true, forceRefresh: true });
+  }
+
+  // --- Event Handlers ---
+
+  _onSyncStart() {
+    this.state.set('isSyncing', true);
+    this._updateSyncUI(true);
+  }
+
+  _onSyncComplete(results) {
+    this.state.set({
+      isSyncing: false,
+      lastSyncTime: new Date(),
+      syncError: null
+    });
+    this._updateSyncUI(false);
+    
+    if (results.errors?.length > 0) {
+      this._showToast(`Sync completed with ${results.errors.length} error(s)`, 'warning');
+    } else if (results.downloaded > 0 || results.merged > 0) {
+      // Data was pulled from remote - reload the UI
+      this._showToast('Synced! Data updated from GitHub.', 'success');
+      this._reloadDataFromStorage();
+    } else if (results.uploaded > 0) {
+      this._showToast('Sync complete!', 'success');
+    }
+    
+    // Call subclass handler
+    if (typeof this.onSyncComplete === 'function') {
+      this.onSyncComplete(results);
+    }
+  }
+
+  /**
+   * Reload data from local storage and notify the app
+   * Used after sync downloads new data
+   */
+  async _reloadDataFromStorage() {
+    const record = await this.storage.loadRecord('appData');
+    if (record && record.data) {
+      this._notifyDataLoaded(record.data, 'sync');
+    }
+  }
+
+  _onSyncError(error) {
+    this.state.set({
+      isSyncing: false,
+      syncError: error.message
+    });
+    this._updateSyncUI(false);
+    this._showToast(`Sync failed: ${error.message}`, 'error');
+    
+    // Call subclass handler
+    if (typeof this.onSyncError === 'function') {
+      this.onSyncError(error);
+    }
+  }
+
+  _onOnlineStatusChange(isOnline) {
+    this.state.set('isOnline', isOnline);
+    
+    if (isOnline) {
+      this._showToast('Back online! Syncing...', 'info');
+    }
+  }
+
+  async _onConflictDetected({ localRecord, remoteData }) {
+    await this._handleConflict(localRecord.data, remoteData.content, remoteData.sha);
+  }
+
+  // --- UI Helpers ---
+
+  _setupOnlineDetection() {
+    window.addEventListener('online', () => {
+      this.state.set('isOnline', true);
+      this._updateOfflineIndicator();
+    });
+    
+    window.addEventListener('offline', () => {
+      this.state.set('isOnline', false);
+      this._updateOfflineIndicator();
+    });
+  }
+
+  _setupOfflineIndicator() {
+    this._updateOfflineIndicator();
+  }
+
+  _updateOfflineIndicator() {
+    const indicator = document.getElementById('offline-indicator');
+    if (indicator) {
+      if (navigator.onLine) {
+        indicator.classList.remove('show');
+      } else {
+        indicator.classList.add('show');
+      }
+    }
+  }
+
+  _updateSyncUI(syncing) {
+    const btn = document.getElementById('sync-btn');
+    const icon = document.getElementById('sync-icon');
+    const text = document.getElementById('sync-text');
+    const status = document.getElementById('sync-status');
+    
+    if (btn) btn.disabled = syncing;
+    if (icon) icon.textContent = syncing ? '⏳' : '🔄';
+    if (text) text.textContent = syncing ? 'Syncing...' : 'Sync';
+    if (status) status.textContent = syncing ? '🔄' : '●';
+  }
+
+  _showToast(message, type = 'info') {
+    if (typeof toast !== 'undefined') {
+      toast[type]?.(message) || toast.show(message, type);
+    } else {
+      console.log(`[${type.toUpperCase()}] ${message}`);
+    }
+  }
+
+  // --- Setup Flow ---
+
+  /**
+   * Show setup screen for GitHub configuration
+   * Uses a modal to work with any page structure
+   */
+  showSetupScreen() {
+    const formHtml = `
+      <form id="setup-form">
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            GitHub Personal Access Token
+          </label>
+          <input 
+            type="password" 
+            name="token" 
+            required
+            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="ghp_..."
+          />
+          <p class="text-xs text-gray-500 mt-1">
+            <a href="https://github.com/settings/tokens/new?scopes=repo" target="_blank" class="text-blue-600 hover:underline">
+              Create a token
+            </a> with 'repo' scope
+          </p>
+        </div>
+        
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            GitHub Username
+          </label>
+          <input 
+            type="text" 
+            name="owner" 
+            required
+            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="your-username"
+            value="${this.storage.loadSharedSetting('githubOwner') || ''}"
+          />
+        </div>
+        
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            Repository Name
+          </label>
+          <input 
+            type="text" 
+            name="repo" 
+            required
+            value="${this.storage.loadSharedSetting('githubRepo') || 'local-first-data'}"
+            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <p class="text-xs text-gray-500 mt-1">
+            This repository will store your app data
+          </p>
+        </div>
+      </form>
+    `;
+    
+    modal.show({
+      title: '⚙️ Setup GitHub Sync',
+      content: formHtml,
+      buttons: [
+        {
+          text: 'Cancel',
+          onClick: () => modal.close()
+        },
+        {
+          text: 'Connect to GitHub',
+          primary: true,
+          onClick: async () => {
+            const form = document.getElementById('setup-form');
+            if (form && form.checkValidity()) {
+              await this._handleSetupSubmit(new FormData(form));
+            } else if (form) {
+              form.reportValidity();
+            }
+          }
+        }
+      ],
+      closeOnBackdrop: false,
+      closeOnEscape: true
+    });
+  }
+
+  async _handleSetupSubmit(formData) {
+    const token = formData.get('token');
+    const owner = formData.get('owner');
+    const repo = formData.get('repo');
+    
+    this._showToast('Testing GitHub connection...', 'info');
+    
+    // Test connection
+    const testGithub = new GitHubSync({ token, owner, repo });
+    
+    const authResult = await testGithub.testAuth();
+    if (!authResult.success) {
+      this._showToast('GitHub authentication failed. Check your token.', 'error');
+      return;
+    }
+    
+    const repoResult = await testGithub.validateRepo();
+    if (!repoResult.success) {
+      this._showToast('Cannot access repository. Check repo name and permissions.', 'error');
+      return;
+    }
+    
+    // Close the setup modal
+    modal.close();
+    
+    // Save settings (shared across all apps)
+    this.storage.saveSharedSetting('githubToken', token);
+    this.storage.saveSharedSetting('githubOwner', owner);
+    this.storage.saveSharedSetting('githubRepo', repo);
+    
+    // Setup sync
+    await this._setupGitHubSync(token, owner, repo);
+    
+    this._showToast('GitHub connected successfully!', 'success');
+    
+    // Load data from GitHub
+    await this._loadDataWithSync();
+  }
+
+  /**
+   * Show settings modal
+   */
+  showSettings() {
+    const token = this.storage.loadSharedSetting('githubToken');
+    const owner = this.storage.loadSharedSetting('githubOwner');
+    const repo = this.storage.loadSharedSetting('githubRepo');
+    const lastSync = this.state.get('lastSyncTime');
+    
+    modal.show({
+      title: 'Settings',
+      content: `
+        <div class="space-y-4">
+          <div>
+            <p class="text-sm font-medium text-gray-700">GitHub Owner</p>
+            <p class="text-gray-900">${owner || 'Not configured'}</p>
+          </div>
+          <div>
+            <p class="text-sm font-medium text-gray-700">Repository</p>
+            <p class="text-gray-900">${repo || 'Not configured'}</p>
+          </div>
+          <div>
+            <p class="text-sm font-medium text-gray-700">Token</p>
+            <p class="text-gray-900">${token ? '••••••••' : 'Not configured'}</p>
+          </div>
+          <div>
+            <p class="text-sm font-medium text-gray-700">Last Sync</p>
+            <p class="text-gray-900">${lastSync ? lastSync.toLocaleString() : 'Never'}</p>
+          </div>
+          <div>
+            <p class="text-sm font-medium text-gray-700">Status</p>
+            <p class="text-gray-900">${navigator.onLine ? '🟢 Online' : '🔴 Offline'}</p>
+          </div>
+        </div>
+      `,
+      buttons: [
+        {
+          text: 'Reconfigure GitHub',
+          onClick: () => {
+            modal.close();
+            this._clearGitHubConfig();
+            this.showSetupScreen();
+          }
+        },
+        {
+          text: 'Close',
+          primary: true,
+          onClick: () => modal.close()
+        }
+      ]
+    });
+  }
+
+  _clearGitHubConfig() {
+    this.storage.saveSharedSetting('githubToken', null);
+    this.storage.saveSharedSetting('githubOwner', null);
+    this.storage.saveSharedSetting('githubRepo', null);
+    
+    if (this.syncController) {
+      this.syncController.stop();
+      this.syncController = null;
+    }
+    this.github = null;
+    this.state.set('isSetup', false);
+  }
+}
+
+// Export for use in other modules
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = App;
+}

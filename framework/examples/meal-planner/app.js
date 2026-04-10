@@ -1,628 +1,375 @@
 /**
  * Meal Planner App
  * A local-first weekly meal planning application
+ * 
+ * Refactored to use the App base class
  */
 
-// App Configuration
-const CONFIG = {
-  appName: 'meal-planner',
-  github: {
-    dataPath: 'apps/meal-planner/data.json'
-  },
-  mealTypes: ['Breakfast', 'Lunch', 'Dinner', 'Snacks']
-};
-
-// State Management
-const appState = new State({
-  currentWeekStart: getWeekStart(new Date()),
-  meals: {},  // { "2026-04-07": { "Breakfast": {...}, "Lunch": {...}, ... } }
-  favorites: [],
-  shoppingList: [],
-  isSetup: false,
-  isSyncing: false
-});
-
-// Storage and Sync
-let storage;
-let githubSync;
-let syncController;
-
-// Initialize App
-document.addEventListener('DOMContentLoaded', async () => {
-  storage = new LocalStorage(CONFIG.appName);
-  await storage.init();
-  
-  // Check if GitHub is configured
-  const token = storage.loadSetting('githubToken');
-  const owner = storage.loadSetting('githubOwner');
-  const repo = storage.loadSetting('githubRepo');
-  
-  if (token && owner && repo) {
-    appState.set('isSetup', true);
-    await initializeSync(token, owner, repo);
-  }
-  
-  // Subscribe to state changes
-  appState.subscribe('currentWeekStart', renderWeek);
-  appState.subscribe('meals', () => {
-    renderMealGrid();
-    renderStats();
-  });
-  appState.subscribe('favorites', renderFavorites);
-  
-  // Load data and render
-  await loadData();
-  renderWeek();
-  renderMealGrid();
-  renderFavorites();
-  renderStats();
-  
-  if (!appState.get('isSetup')) {
-    showSetupScreen();
-  }
-});
-
-async function initializeSync(token, owner, repo) {
-  githubSync = new GitHubSync({ token, owner, repo });
-  
-  try {
-    await githubSync.testAuth();
-    syncController = new SyncController(storage, githubSync);
-    
-    syncController.on('syncStart', () => {
-      appState.set('isSyncing', true);
-      document.getElementById('sync-status').textContent = '🔄';
-    });
-    
-    syncController.on('syncComplete', (results) => {
-      appState.set('isSyncing', false);
-      document.getElementById('sync-status').textContent = '●';
-      
-      if (results.errors && results.errors.length > 0) {
-        // Partial sync failure
-        toast.warning(`Sync completed with ${results.errors.length} error(s)`, 5000);
-      } else if (results.merged > 0) {
-        // Data was merged with remote changes
-        toast.info(`Sync complete! Merged ${results.merged} change(s) from other devices`, 4000);
-      } else if (results.uploaded > 0 || results.downloaded > 0) {
-        toast.success(`Sync complete!`, 3000);
+class MealPlannerApp extends App {
+  constructor() {
+    super({
+      appName: 'meal-planner',
+      dataPath: 'apps/meal-planner/data.json',
+      initialState: {
+        currentWeekStart: this.getWeekStart(new Date()),
+        meals: {},     // { "2026-04-07": { "Breakfast": {...}, "Lunch": {...}, ... } }
+        favorites: [],
+        mealTypes: ['Breakfast', 'Lunch', 'Dinner', 'Snacks']
       }
-      
-      loadData();
     });
-    
-    syncController.on('syncError', (error) => {
-      appState.set('isSyncing', false);
-      document.getElementById('sync-status').textContent = '⚠️';
-      toast.error(`Sync failed: ${error.message}`, 5000);
-    });
-    
-    syncController.start();
-  } catch (error) {
-    console.error('Sync init failed:', error);
-    toast.error('GitHub sync failed: ' + error.message);
-    // Don't start sync controller if auth failed
-    githubSync = null;
-    syncController = null;
   }
-}
 
-// Date Utilities
-function getWeekStart(date) {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day;
-  return new Date(d.setDate(diff)).toISOString().split('T')[0];
-}
-
-function formatDate(dateStr) {
-  const date = new Date(dateStr + 'T00:00:00');
-  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-}
-
-function getWeekDates(startDate) {
-  const dates = [];
-  const start = new Date(startDate + 'T00:00:00');
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
-    dates.push(d.toISOString().split('T')[0]);
+  getWeekStart(date) {
+    const d = new Date(date);
+    const day = d.getDay();
+    d.setDate(d.getDate() - day);
+    return d.toISOString().split('T')[0];
   }
-  return dates;
-}
 
-// Data Management
-async function loadData() {
-  const data = await storage.load('mealData');
-  
-  if (data) {
-    appState.set({
+  async onInit() {
+    this.state.subscribe('currentWeekStart', () => this.renderWeek());
+    this.state.subscribe('meals', () => this.renderMealGrid());
+    this.state.subscribe('favorites', () => this.renderFavorites());
+    this.setupEventHandlers();
+  }
+
+  onDataLoaded(data, source) {
+    this.state.set({
       meals: data.meals || {},
-      favorites: data.favorites || [],
-      shoppingList: data.shoppingList || []
+      favorites: data.favorites || []
     });
-  } else if (syncController) {
-    try {
-      const result = await syncController.downloadFromGitHub(CONFIG.github.dataPath, 'mealData');
-      if (result.status === 'downloaded' && result.data) {
-        appState.set({
-          meals: result.data.meals || {},
-          favorites: result.data.favorites || [],
-          shoppingList: result.data.shoppingList || []
-        });
-      }
-    } catch (e) {
-      console.log('No remote data yet');
+    this.renderWeek();
+    this.renderMealGrid();
+    this.renderFavorites();
+    this.renderStats();
+  }
+
+  getData() {
+    return {
+      meals: this.state.get('meals'),
+      favorites: this.state.get('favorites')
+    };
+  }
+
+  setupEventHandlers() {
+    document.getElementById('sync-btn')?.addEventListener('click', () => this.sync());
+    document.getElementById('settings-btn')?.addEventListener('click', () => this.showSettings());
+    document.getElementById('prev-week')?.addEventListener('click', () => this.changeWeek(-1));
+    document.getElementById('next-week')?.addEventListener('click', () => this.changeWeek(1));
+    document.getElementById('today-btn')?.addEventListener('click', () => this.goToToday());
+  }
+
+  // --- Week Navigation ---
+
+  changeWeek(delta) {
+    const current = new Date(this.state.get('currentWeekStart'));
+    current.setDate(current.getDate() + (delta * 7));
+    this.state.set('currentWeekStart', current.toISOString().split('T')[0]);
+  }
+
+  goToToday() {
+    this.state.set('currentWeekStart', this.getWeekStart(new Date()));
+  }
+
+  getWeekDates(startDate) {
+    const dates = [];
+    const start = new Date(startDate + 'T00:00:00');
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      dates.push(d.toISOString().split('T')[0]);
     }
+    return dates;
   }
-}
 
-async function saveData() {
-  const data = {
-    meals: appState.get('meals'),
-    favorites: appState.get('favorites'),
-    shoppingList: appState.get('shoppingList'),
-    lastUpdated: new Date().toISOString()
-  };
-  
-  await storage.save('mealData', data, {
-    synced: false,
-    githubPath: CONFIG.github.dataPath
-  });
-  
-  if (syncController && navigator.onLine) {
-    setTimeout(() => syncController.sync(), 500);
+  formatDate(dateStr) {
+    const date = new Date(dateStr + 'T00:00:00');
+    return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   }
-}
 
-// Rendering
-function renderWeek() {
-  const weekStart = appState.get('currentWeekStart');
-  const dates = getWeekDates(weekStart);
-  
-  // Update week display
-  const weekEnd = dates[6];
-  document.getElementById('week-display').textContent = 
-    `${formatDate(weekStart)} - ${formatDate(weekEnd)}`;
-  
-  // Update day headers
-  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  dates.forEach((date, i) => {
-    const d = new Date(date + 'T00:00:00');
-    const isToday = date === new Date().toISOString().split('T')[0];
-    document.getElementById(`day-${i}`).innerHTML = `
-      <div class="${isToday ? 'bg-emerald-600 text-white rounded-lg p-1' : ''}">
-        <div class="font-semibold">${dayNames[d.getDay()]}</div>
-        <div class="text-xs">${d.getDate()}</div>
+  // --- Rendering ---
+
+  renderWeek() {
+    const container = document.getElementById('week-header');
+    if (!container) return;
+    
+    const weekStart = this.state.get('currentWeekStart');
+    const weekDates = this.getWeekDates(weekStart);
+    const today = new Date().toISOString().split('T')[0];
+    
+    container.innerHTML = `
+      <div class="flex justify-between items-center mb-4">
+        <button id="prev-week" class="btn btn-secondary">← Prev</button>
+        <h2 class="text-xl font-bold">
+          ${this.formatDate(weekDates[0])} - ${this.formatDate(weekDates[6])}
+        </h2>
+        <div class="flex gap-2">
+          <button id="today-btn" class="btn btn-secondary">Today</button>
+          <button id="next-week" class="btn btn-secondary">Next →</button>
+        </div>
       </div>
     `;
-  });
-}
-
-function renderMealGrid() {
-  const weekStart = appState.get('currentWeekStart');
-  const dates = getWeekDates(weekStart);
-  const meals = appState.get('meals') || {};
-  
-  const grid = document.getElementById('meal-grid');
-  grid.innerHTML = CONFIG.mealTypes.map(mealType => `
-    <tr class="border-b">
-      <td class="p-3 font-medium text-gray-700 bg-gray-50">${getMealEmoji(mealType)} ${mealType}</td>
-      ${dates.map(date => {
-        const meal = meals[date]?.[mealType];
-        return `
-          <td class="p-2 border-l">
-            <div class="meal-slot rounded-lg p-2 cursor-pointer ${meal ? 'bg-emerald-50' : 'bg-gray-50 hover:bg-emerald-50'}"
-                 onclick="editMeal('${date}', '${mealType}')">
-              ${meal ? `
-                <div class="text-sm font-medium text-gray-800">${meal.name}</div>
-                ${meal.notes ? `<div class="text-xs text-gray-500 truncate">${meal.notes}</div>` : ''}
-              ` : `
-                <div class="text-xs text-gray-400 text-center">+ Add</div>
-              `}
-            </div>
-          </td>
-        `;
-      }).join('')}
-    </tr>
-  `).join('');
-}
-
-function getMealEmoji(mealType) {
-  const emojis = { 'Breakfast': '🌅', 'Lunch': '☀️', 'Dinner': '🌙', 'Snacks': '🍎' };
-  return emojis[mealType] || '🍽️';
-}
-
-function renderFavorites() {
-  const favorites = appState.get('favorites') || [];
-  const container = document.getElementById('favorites-container');
-  
-  if (favorites.length === 0) {
-    container.innerHTML = '<p class="text-gray-400 text-sm">No favorites yet. Add your family\'s go-to meals!</p>';
-    return;
+    
+    // Re-attach event handlers
+    document.getElementById('prev-week')?.addEventListener('click', () => this.changeWeek(-1));
+    document.getElementById('next-week')?.addEventListener('click', () => this.changeWeek(1));
+    document.getElementById('today-btn')?.addEventListener('click', () => this.goToToday());
   }
-  
-  container.innerHTML = favorites.map(fav => `
-    <button class="px-3 py-2 bg-gray-100 rounded-lg hover:bg-emerald-100 text-sm flex items-center gap-2 group"
-            onclick="useFavorite('${fav.id}')">
-      <span>${fav.name}</span>
-      <span class="text-gray-400 group-hover:text-red-500" onclick="event.stopPropagation(); deleteFavorite('${fav.id}')">×</span>
-    </button>
-  `).join('');
-}
 
-function renderStats() {
-  const meals = appState.get('meals') || {};
-  const weekStart = appState.get('currentWeekStart');
-  const dates = getWeekDates(weekStart);
-  const shoppingList = appState.get('shoppingList') || [];
-  
-  let planned = 0;
-  const recipes = new Set();
-  
-  dates.forEach(date => {
-    if (meals[date]) {
-      Object.values(meals[date]).forEach(meal => {
-        if (meal && meal.name) {
-          planned++;
-          recipes.add(meal.name.toLowerCase());
-        }
-      });
+  renderMealGrid() {
+    const container = document.getElementById('meal-grid');
+    if (!container) return;
+    
+    if (!this.state.get('isSetup')) {
+      this.showSetupScreen();
+      return;
     }
-  });
-  
-  document.getElementById('stat-planned').textContent = planned;
-  document.getElementById('stat-recipes').textContent = recipes.size;
-  document.getElementById('stat-shopping').textContent = shoppingList.length;
-}
+    
+    const weekDates = this.getWeekDates(this.state.get('currentWeekStart'));
+    const mealTypes = this.state.get('mealTypes');
+    const meals = this.state.get('meals') || {};
+    const today = new Date().toISOString().split('T')[0];
+    
+    container.innerHTML = `
+      <div class="overflow-x-auto">
+        <table class="w-full border-collapse">
+          <thead>
+            <tr>
+              <th class="p-2 border bg-gray-50 w-24"></th>
+              ${weekDates.map(date => `
+                <th class="p-2 border bg-gray-50 text-center ${date === today ? 'bg-emerald-50' : ''}">
+                  ${this.formatDate(date)}
+                </th>
+              `).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${mealTypes.map(type => `
+              <tr>
+                <td class="p-2 border bg-gray-50 font-medium">${type}</td>
+                ${weekDates.map(date => {
+                  const meal = meals[date]?.[type];
+                  return `
+                    <td class="p-2 border ${date === today ? 'bg-emerald-50' : ''} hover:bg-gray-50 cursor-pointer"
+                        onclick="app.showMealEditor('${date}', '${type}')">
+                      ${meal ? `
+                        <div class="text-sm">
+                          <div class="font-medium">${this.escapeHtml(meal.name)}</div>
+                          ${meal.notes ? `<div class="text-gray-500 text-xs">${this.escapeHtml(meal.notes)}</div>` : ''}
+                        </div>
+                      ` : `
+                        <div class="text-gray-400 text-sm">+ Add</div>
+                      `}
+                    </td>
+                  `;
+                }).join('')}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
 
-// Navigation
-function previousWeek() {
-  const current = appState.get('currentWeekStart');
-  const date = new Date(current + 'T00:00:00');
-  date.setDate(date.getDate() - 7);
-  appState.set('currentWeekStart', date.toISOString().split('T')[0]);
-  renderMealGrid();
-}
-
-function nextWeek() {
-  const current = appState.get('currentWeekStart');
-  const date = new Date(current + 'T00:00:00');
-  date.setDate(date.getDate() + 7);
-  appState.set('currentWeekStart', date.toISOString().split('T')[0]);
-  renderMealGrid();
-}
-
-// Meal Management
-window.editMeal = function(date, mealType) {
-  const meals = appState.get('meals') || {};
-  const existing = meals[date]?.[mealType];
-  const favorites = appState.get('favorites') || [];
-  
-  const favoritesHtml = favorites.length > 0 ? `
-    <div class="mb-4">
-      <label class="block text-sm font-medium text-gray-700 mb-2">Quick Pick from Favorites</label>
+  renderFavorites() {
+    const container = document.getElementById('favorites-container');
+    if (!container) return;
+    
+    const favorites = this.state.get('favorites') || [];
+    
+    if (favorites.length === 0) {
+      container.innerHTML = `
+        <div class="text-center text-gray-500 py-4">
+          No favorite meals yet. Click ⭐ when adding a meal to save it!
+        </div>
+      `;
+      return;
+    }
+    
+    container.innerHTML = `
       <div class="flex flex-wrap gap-2">
-        ${favorites.map(f => `
-          <button type="button" class="px-2 py-1 text-xs bg-emerald-100 text-emerald-700 rounded hover:bg-emerald-200"
-                  onclick="document.getElementById('meal-name').value='${f.name}'; document.getElementById('meal-notes').value='${f.notes || ''}';">
-            ${f.name}
+        ${favorites.map(fav => `
+          <button onclick="app.quickAddFavorite('${fav.id}')"
+                  class="px-3 py-1 bg-amber-100 text-amber-800 rounded-full text-sm hover:bg-amber-200">
+            ${this.escapeHtml(fav.name)}
           </button>
         `).join('')}
       </div>
-    </div>
-  ` : '';
-  
-  modal.show({
-    title: `${getMealEmoji(mealType)} ${mealType} - ${formatDate(date)}`,
-    content: `
-      <form id="meal-form" class="space-y-4">
-        ${favoritesHtml}
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Meal Name</label>
-          <input type="text" id="meal-name" name="name" value="${existing?.name || ''}" 
-                 class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                 placeholder="e.g., Spaghetti Bolognese" />
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Notes / Ingredients</label>
-          <textarea id="meal-notes" name="notes" rows="3" 
-                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    placeholder="Shopping items, recipe notes...">${existing?.notes || ''}</textarea>
-        </div>
-      </form>
-    `,
-    buttons: [
-      existing ? {
-        text: 'Clear',
-        onClick: async () => {
-          const meals = { ...appState.get('meals') };
-          if (meals[date]) {
-            delete meals[date][mealType];
-            if (Object.keys(meals[date]).length === 0) {
-              delete meals[date];
-            }
-          }
-          appState.set('meals', meals);
-          await saveData();
-          toast.success('Meal cleared');
-          modal.close();
-        }
-      } : null,
-      { text: 'Cancel', onClick: () => modal.close() },
-      {
-        text: 'Save',
-        primary: true,
-        onClick: async () => {
-          const name = document.getElementById('meal-name').value.trim();
-          if (!name) {
-            toast.error('Please enter a meal name');
-            return;
-          }
-          
-          const meals = { ...appState.get('meals') };
-          if (!meals[date]) meals[date] = {};
-          
-          meals[date][mealType] = {
-            name,
-            notes: document.getElementById('meal-notes').value.trim()
-          };
-          
-          appState.set('meals', meals);
-          await saveData();
-          toast.success('Meal saved!');
-          modal.close();
-        }
-      }
-    ].filter(Boolean)
-  });
-};
-
-// Favorites
-window.showAddFavorite = function() {
-  modal.show({
-    title: '⭐ Add Favorite Meal',
-    content: `
-      <form id="favorite-form" class="space-y-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Meal Name *</label>
-          <input type="text" name="name" required
-                 class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                 placeholder="e.g., Taco Tuesday" />
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Default Notes</label>
-          <textarea name="notes" rows="2"
-                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    placeholder="Shopping items, recipe link..."></textarea>
-        </div>
-      </form>
-    `,
-    buttons: [
-      { text: 'Cancel', onClick: () => modal.close() },
-      {
-        text: 'Add',
-        primary: true,
-        onClick: async () => {
-          const form = document.getElementById('favorite-form');
-          const data = FormHelper.getData(form);
-          
-          if (!data.name?.trim()) {
-            toast.error('Please enter a meal name');
-            return;
-          }
-          
-          const favorites = [...(appState.get('favorites') || []), {
-            id: Date.now().toString(),
-            name: data.name.trim(),
-            notes: data.notes?.trim() || ''
-          }];
-          
-          appState.set('favorites', favorites);
-          await saveData();
-          toast.success('Favorite added!');
-          modal.close();
-        }
-      }
-    ]
-  });
-};
-
-window.useFavorite = function(id) {
-  const favorites = appState.get('favorites') || [];
-  const fav = favorites.find(f => f.id === id);
-  if (fav) {
-    toast.info(`Click a meal slot to add "${fav.name}"`);
+    `;
   }
-};
 
-window.deleteFavorite = async function(id) {
-  const confirmed = await modal.confirm('Remove this favorite?', 'Delete Favorite');
-  if (confirmed) {
-    const favorites = (appState.get('favorites') || []).filter(f => f.id !== id);
-    appState.set('favorites', favorites);
-    await saveData();
-    toast.success('Favorite removed');
-  }
-};
-
-// Shopping List
-window.showShoppingList = function() {
-  const meals = appState.get('meals') || {};
-  const weekStart = appState.get('currentWeekStart');
-  const dates = getWeekDates(weekStart);
-  
-  // Extract ingredients from notes
-  const ingredients = [];
-  dates.forEach(date => {
-    if (meals[date]) {
-      Object.values(meals[date]).forEach(meal => {
-        if (meal?.notes) {
-          // Split notes by newlines and commas
-          const items = meal.notes.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
-          items.forEach(item => {
-            if (!ingredients.some(i => i.toLowerCase() === item.toLowerCase())) {
-              ingredients.push(item);
-            }
-          });
-        }
-      });
-    }
-  });
-  
-  modal.show({
-    title: '🛒 Shopping List',
-    content: `
-      <div class="space-y-4">
-        <p class="text-sm text-gray-600">Items extracted from meal notes for this week:</p>
-        ${ingredients.length > 0 ? `
-          <ul class="space-y-2">
-            ${ingredients.map(item => `
-              <li class="flex items-center gap-2">
-                <input type="checkbox" class="w-4 h-4 text-emerald-600 rounded" />
-                <span>${item}</span>
-              </li>
-            `).join('')}
-          </ul>
-        ` : `
-          <p class="text-gray-400 text-center py-4">No items found. Add ingredients to meal notes!</p>
-        `}
+  renderStats() {
+    const container = document.getElementById('stats-container');
+    if (!container) return;
+    
+    const meals = this.state.get('meals') || {};
+    const favorites = this.state.get('favorites') || [];
+    
+    let totalMeals = 0;
+    Object.values(meals).forEach(day => {
+      totalMeals += Object.keys(day).length;
+    });
+    
+    container.innerHTML = `
+      <div class="grid grid-cols-2 gap-4 text-center">
+        <div class="bg-white rounded-lg p-4 shadow">
+          <div class="text-2xl font-bold text-emerald-600">${totalMeals}</div>
+          <div class="text-sm text-gray-500">Meals Planned</div>
+        </div>
+        <div class="bg-white rounded-lg p-4 shadow">
+          <div class="text-2xl font-bold text-amber-600">${favorites.length}</div>
+          <div class="text-sm text-gray-500">Favorites</div>
+        </div>
       </div>
-    `,
-    buttons: [
-      { text: 'Close', primary: true, onClick: () => modal.close() }
-    ]
-  });
-};
-
-// Sync
-window.manualSync = async function() {
-  if (!syncController) {
-    toast.error('GitHub not configured');
-    return;
+    `;
   }
-  
-  toast.info('Syncing...');
-  await syncController.sync();
-  toast.success('Sync complete!');
-};
 
-// Settings
-window.showSettings = function() {
-  const token = storage.loadSetting('githubToken');
-  const owner = storage.loadSetting('githubOwner');
-  const repo = storage.loadSetting('githubRepo');
-  
-  modal.show({
-    title: 'Settings',
-    content: `
-      <div class="space-y-4">
-        <div>
-          <p class="text-sm font-medium text-gray-700">GitHub Owner</p>
-          <p class="text-gray-900">${owner || 'Not configured'}</p>
-        </div>
-        <div>
-          <p class="text-sm font-medium text-gray-700">Repository</p>
-          <p class="text-gray-900">${repo || 'Not configured'}</p>
-        </div>
-        <div>
-          <p class="text-sm font-medium text-gray-700">Status</p>
-          <p class="text-gray-900">${token ? '✅ Connected' : '❌ Not connected'}</p>
-        </div>
-        <hr />
-        <button onclick="showSetupScreen(); modal.close();" class="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200">
-          Reconfigure GitHub
-        </button>
-        <button onclick="clearLocalData()" class="w-full px-4 py-2 bg-red-100 text-red-700 rounded-md hover:bg-red-200">
-          Clear Local Data
-        </button>
-      </div>
-    `,
-    buttons: [
-      { text: 'Close', primary: true, onClick: () => modal.close() }
-    ]
-  });
-};
+  // --- Meal Operations ---
 
-window.clearLocalData = async function() {
-  const confirmed = await modal.confirm('This will clear all local data. Are you sure?', 'Clear Data');
-  if (confirmed) {
-    await storage.clear();
-    location.reload();
-  }
-};
-
-// Setup Screen
-function showSetupScreen() {
-  const container = document.querySelector('main');
-  container.innerHTML = `
-    <div class="max-w-md mx-auto">
-      <div class="bg-white rounded-lg shadow-lg p-8">
-        <h2 class="text-2xl font-bold text-gray-900 mb-4">Welcome to Meal Planner! 🍽️</h2>
-        <p class="text-gray-600 mb-6">Connect to GitHub to sync your meal plans across devices.</p>
-        
-        <form id="setup-form" class="space-y-4">
+  showMealEditor(date, mealType) {
+    const meals = this.state.get('meals') || {};
+    const existing = meals[date]?.[mealType];
+    const favorites = this.state.get('favorites') || [];
+    
+    modal.show({
+      title: `${mealType} - ${this.formatDate(date)}`,
+      content: `
+        <form id="meal-form" class="space-y-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">GitHub Token</label>
-            <input type="password" name="token" required
-                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                   placeholder="ghp_xxxxxxxxxxxx" />
-            <p class="text-xs text-gray-500 mt-1">Create at GitHub → Settings → Developer settings → Personal access tokens</p>
+            <label class="form-label">Meal Name</label>
+            <input type="text" name="name" class="form-input" 
+                   value="${this.escapeHtml(existing?.name || '')}"
+                   placeholder="What are you having?">
           </div>
-          
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">GitHub Username</label>
-            <input type="text" name="owner" required
-                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                   placeholder="your-username" />
+            <label class="form-label">Notes</label>
+            <textarea name="notes" class="form-input" rows="2" 
+                      placeholder="Recipe link, ingredients...">${this.escapeHtml(existing?.notes || '')}</textarea>
           </div>
-          
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">Repository Name</label>
-            <input type="text" name="repo" required value="local-first-app-data"
-                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+          <div class="flex items-center gap-2">
+            <input type="checkbox" name="favorite" id="favorite-check" ${existing?.isFavorite ? 'checked' : ''}>
+            <label for="favorite-check">⭐ Save to favorites</label>
           </div>
-          
-          <button type="submit" class="w-full px-4 py-3 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 font-medium">
-            Connect & Start Planning
-          </button>
+          ${favorites.length > 0 ? `
+            <div>
+              <label class="form-label">Or pick from favorites:</label>
+              <select name="favoriteSelect" class="form-input" onchange="this.form.name.value = this.value; this.value = '';">
+                <option value="">Choose...</option>
+                ${favorites.map(f => `<option value="${this.escapeHtml(f.name)}">${this.escapeHtml(f.name)}</option>`).join('')}
+              </select>
+            </div>
+          ` : ''}
         </form>
-        
-        <div class="mt-4 text-center">
-          <button onclick="skipSetup()" class="text-sm text-gray-500 hover:text-gray-700">
-            Skip for now (local only)
-          </button>
-        </div>
-      </div>
-    </div>
-  `;
-  
-  document.getElementById('setup-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const data = FormHelper.getData(e.target);
+      `,
+      buttons: [
+        existing ? {
+          text: 'Remove',
+          onClick: () => {
+            this.removeMeal(date, mealType);
+            modal.close();
+          }
+        } : null,
+        { text: 'Cancel', onClick: () => modal.close() },
+        {
+          text: existing ? 'Update' : 'Save',
+          primary: true,
+          onClick: () => {
+            const data = FormHelper.getData('#meal-form');
+            if (data.name?.trim()) {
+              this.saveMeal(date, mealType, data);
+            }
+            modal.close();
+          }
+        }
+      ].filter(Boolean)
+    });
+  }
+
+  saveMeal(date, mealType, data) {
+    const meals = { ...this.state.get('meals') };
     
-    toast.info('Testing connection...');
-    
-    try {
-      const testSync = new GitHubSync({ token: data.token, owner: data.owner, repo: data.repo });
-      await testSync.testAuth();
-      
-      storage.saveSetting('githubToken', data.token);
-      storage.saveSetting('githubOwner', data.owner);
-      storage.saveSetting('githubRepo', data.repo);
-      
-      toast.success('Connected successfully!');
-      appState.set('isSetup', true);
-      await initializeSync(data.token, data.owner, data.repo);
-      location.reload();
-      
-    } catch (error) {
-      toast.error('Connection failed: ' + error.message);
+    if (!meals[date]) {
+      meals[date] = {};
     }
-  });
+    
+    const meal = {
+      name: data.name.trim(),
+      notes: data.notes?.trim() || '',
+      isFavorite: data.favorite === 'on',
+      updatedAt: new Date().toISOString()
+    };
+    
+    meals[date][mealType] = meal;
+    this.state.set('meals', meals);
+    
+    // Add to favorites if checked
+    if (meal.isFavorite) {
+      this.addToFavorites(meal.name);
+    }
+    
+    this.saveData();
+    toast.success('Meal saved!');
+  }
+
+  removeMeal(date, mealType) {
+    const meals = { ...this.state.get('meals') };
+    
+    if (meals[date]) {
+      delete meals[date][mealType];
+      if (Object.keys(meals[date]).length === 0) {
+        delete meals[date];
+      }
+    }
+    
+    this.state.set('meals', meals);
+    this.saveData();
+    toast.success('Meal removed!');
+  }
+
+  addToFavorites(name) {
+    const favorites = this.state.get('favorites') || [];
+    
+    // Check if already exists
+    if (favorites.some(f => f.name.toLowerCase() === name.toLowerCase())) {
+      return;
+    }
+    
+    const newFavorite = {
+      id: this.generateId(),
+      name: name,
+      addedAt: new Date().toISOString()
+    };
+    
+    this.state.set('favorites', [...favorites, newFavorite]);
+  }
+
+  quickAddFavorite(favoriteId) {
+    const favorites = this.state.get('favorites') || [];
+    const favorite = favorites.find(f => f.id === favoriteId);
+    if (!favorite) return;
+    
+    // Add to today's dinner by default
+    const today = new Date().toISOString().split('T')[0];
+    this.saveMeal(today, 'Dinner', { name: favorite.name, notes: '' });
+  }
+
+  // --- Utilities ---
+
+  generateId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  }
+
+  escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
 }
 
-window.skipSetup = function() {
-  appState.set('isSetup', true);
-  location.reload();
-};
+// Initialize app
+let app;
+document.addEventListener('DOMContentLoaded', async () => {
+  app = new MealPlannerApp();
+  await app.init();
+});

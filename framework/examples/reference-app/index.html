@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Local-first app">
-  <title>My App - Local First</title>
+  <meta name="description" content="Reference implementation of a local-first app with GitHub sync">
+  <title>Local-First Reference App</title>
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -16,13 +16,34 @@
   <!-- iOS PWA Support -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="My App">
+  <meta name="apple-mobile-web-app-title" content="Reference App">
   
   <!-- Core Framework Styles -->
   <link rel="stylesheet" href="../../styles/core.css">
   
   <style>
-    /* App-specific styles go here */
+    /* App-specific styles only */
+    .task-item {
+      transition: all 0.2s ease;
+    }
+    
+    .task-item:hover {
+      transform: translateX(4px);
+    }
+    
+    .task-item.completed .task-title {
+      text-decoration: line-through;
+      color: #9CA3AF;
+    }
+    
+    .priority-high { border-left-color: #EF4444; }
+    .priority-medium { border-left-color: #F59E0B; }
+    .priority-low { border-left-color: #10B981; }
+    
+    .filter-active {
+      background: #3B82F6;
+      color: white;
+    }
   </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -32,13 +53,16 @@
     <div class="max-w-4xl mx-auto px-4">
       <div class="flex justify-between h-14">
         <div class="flex items-center gap-3">
-          <span class="text-2xl">📱</span>
-          <h1 class="text-lg font-bold text-gray-900">My App</h1>
+          <span class="text-2xl">📋</span>
+          <h1 class="text-lg font-bold text-gray-900">Reference App</h1>
         </div>
         <div class="flex items-center gap-3">
+          <span id="sync-status" class="sync-status">
+            <span class="sync-status-dot"></span>
+            <span id="sync-status-text">Ready</span>
+          </span>
           <button id="sync-btn" class="btn btn-ghost" title="Sync now">
             <span id="sync-icon">🔄</span>
-            <span id="sync-text">Sync</span>
           </button>
           <button id="settings-btn" class="btn btn-ghost" title="Settings">
             ⚙️
