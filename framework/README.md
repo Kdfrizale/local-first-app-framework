@@ -8,6 +8,17 @@ A minimal, dependency-free framework for building local-first web applications w
 - User owns their data (stored in their GitHub repo)
 - AI-agent friendly (consistent patterns, clear structure)
 
+## 🚀 Deploy to GitHub Pages
+
+1. Push this repo to GitHub
+2. Go to **Settings → Pages → Source: main branch**
+3. Access at `https://username.github.io/repo-name/`
+
+Apps available:
+- `/examples/reading-log/` - Book tracking with ISBN lookup
+- `/examples/goal-tracker/` - Goals with lag/lead measures  
+- `/examples/meal-planner/` - Weekly meal planning
+
 ## Quick Start
 
 1. Copy `templates/` to `examples/your-app/`
