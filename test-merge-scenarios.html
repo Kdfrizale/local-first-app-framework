@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Multi-Device Merge Test</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .test-pass { color: #10b981; }
+    .test-fail { color: #ef4444; }
+    .test-running { color: #f59e0b; }
+  </style>
+</head>
+<body class="bg-gray-50 p-8">
+  <div class="max-w-4xl mx-auto">
+    <h1 class="text-3xl font-bold mb-6">🔄 Multi-Device Merge Test</h1>
+    
+    <div class="bg-white rounded-lg shadow p-6 mb-6">
+      <h2 class="text-xl font-semibold mb-4">Merge Scenarios</h2>
+      <p class="mb-4 text-gray-600">
+        These tests verify that data merges correctly when two devices both make changes.
+      </p>
+      
+      <div class="space-y-2 mb-4">
+        <button onclick="runAllTests()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+          Run All Merge Tests
+        </button>
+        <button onclick="clearResults()" class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 ml-2">
+          Clear Results
+        </button>
+      </div>
+      
+      <div id="test-summary" class="mb-4 p-4 bg-gray-100 rounded hidden">
+        <div class="font-semibold">Summary:</div>
+        <div id="summary-text"></div>
+      </div>
+      
+      <div id="test-results" class="space-y-4"></div>
+    </div>
+  </div>
+
+  <!-- Test Framework -->
+  <script>
+    const results = {
+      total: 0,
+      passed: 0,
+      failed: 0
+    };
+
+    function clearResults() {
+      results.total = 0;
+      results.passed = 0;
+      results.failed = 0;
+      document.getElementById('test-results').innerHTML = '';
+      document.getElementById('test-summary').classList.add('hidden');
+    }
+
+    function updateSummary() {
+      const summaryDiv = document.getElementById('test-summary');
+      const summaryText = document.getElementById('summary-text');
+      
+      summaryDiv.classList.remove('hidden');
+      summaryText.innerHTML = `
+        <span class="test-pass">✓ ${results.passed} passed</span> • 
+        <span class="test-fail">✗ ${results.failed} failed</span> • 
+        <span>${results.total} total</span>
+      `;
+    }
+
+    async function runTest(name, testFn) {
+      const testDiv = document.createElement('div');
+      testDiv.className = 'test-running p-4 border-l-4 border-yellow-500 bg-yellow-50';
+      testDiv.innerHTML = `⏳ ${name}...`;
+      
+      const resultsContainer = document.getElementById('test-results');
+      resultsContainer.appendChild(testDiv);
+      
+      results.total++;
+      
+      try {
+        await testFn();
+        testDiv.className = 'test-pass p-4 border-l-4 border-green-500 bg-green-50';
+        testDiv.innerHTML = `✓ ${name}`;
+        results.passed++;
+      } catch (error) {
+        testDiv.className = 'test-fail p-4 border-l-4 border-red-500 bg-red-50';
+        testDiv.innerHTML = `
+          ✗ ${name}
+          <div class="ml-4 text-sm mt-1 text-red-700">${error.message}</div>
+        `;
+        results.failed++;
+      }
+      
+      updateSummary();
+    }
+
+    function assert(condition, message) {
+      if (!condition) {
+        throw new Error(message || 'Assertion failed');
+      }
+    }
+
+    function deepEqual(a, b) {
+      return JSON.stringify(a) === JSON.stringify(b);
+    }
+
+    async function runAllTests() {
+      clearResults();
+      
+      // Test 1: Merge new records from both sides
+      await runTest('Merge: Both devices add different records', async () => {
+        const local = {
+          books: [
+            { id: '1', title: 'Book A', createdAt: '2026-04-10T01:00:00Z', updatedAt: '2026-04-10T01:00:00Z' },
+            { id: '2', title: 'Book B', createdAt: '2026-04-10T01:05:00Z', updatedAt: '2026-04-10T01:05:00Z' }
+          ],
+          readers: ['Alice']
+        };
+        
+        const remote = {
+          books: [
+            { id: '1', title: 'Book A', createdAt: '2026-04-10T01:00:00Z', updatedAt: '2026-04-10T01:00:00Z' },
+            { id: '3', title: 'Book C', createdAt: '2026-04-10T01:10:00Z', updatedAt: '2026-04-10T01:10:00Z' }
+          ],
+          readers: ['Bob']
+        };
+        
+        const syncController = new SyncController(null, null);
+        const merged = syncController.mergeData(local, remote);
+        
+        // Should have all 3 books
+        assert(merged.books.length === 3, `Expected 3 books, got ${merged.books.length}`);
+        
+        // Should have all readers
+        assert(merged.readers.length === 2, `Expected 2 readers, got ${merged.readers.length}`);
+        assert(merged.readers.includes('Alice'), 'Should include Alice');
+        assert(merged.readers.includes('Bob'), 'Should include Bob');
+      });
+
+      // Test 2: Newer record wins for same ID
+      await runTest('Merge: Newer version wins for same record', async () => {
+        const local = {
+          books: [
+            { id: '1', title: 'Book A v1', updatedAt: '2026-04-10T01:00:00Z' }
+          ]
+        };
+        
+        const remote = {
+          books: [
+            { id: '1', title: 'Book A v2', updatedAt: '2026-04-10T02:00:00Z' }
+          ]
+        };
+        
+        const syncController = new SyncController(null, null);
+        const merged = syncController.mergeData(local, remote);
+        
+        // Remote is newer, should win
+        assert(merged.books[0].title === 'Book A v2', `Expected 'Book A v2', got '${merged.books[0].title}'`);
+      });
+
+      // Test 3: Local newer wins
+      await runTest('Merge: Local newer version wins', async () => {
+        const local = {
+          books: [
+            { id: '1', title: 'Book A v3', updatedAt: '2026-04-10T03:00:00Z' }
+          ]
+        };
+        
+        const remote = {
+          books: [
+            { id: '1', title: 'Book A v2', updatedAt: '2026-04-10T02:00:00Z' }
+          ]
+        };
+        
+        const syncController = new SyncController(null, null);
+        const merged = syncController.mergeData(local, remote);
+        
+        // Local is newer, should win
+        assert(merged.books[0].title === 'Book A v3', `Expected 'Book A v3', got '${merged.books[0].title}'`);
+      });
+
+      // Test 4: Simple array union
+      await runTest('Merge: Simple arrays combine (union)', async () => {
+        const local = {
+          readers: ['Alice', 'Bob']
+        };
+        
+        const remote = {
+          readers: ['Bob', 'Charlie']
+        };
+        
+        const syncController = new SyncController(null, null);
+        const merged = syncController.mergeData(local, remote);
+        
+        // Should have all 3 unique readers
+        assert(merged.readers.length === 3, `Expected 3 readers, got ${merged.readers.length}`);
+        assert(merged.readers.includes('Alice'), 'Should include Alice');
+        assert(merged.readers.includes('Bob'), 'Should include Bob');
+        assert(merged.readers.includes('Charlie'), 'Should include Charlie');
+      });
+
+      // Test 5: Empty local
+      await runTest('Merge: Empty local uses remote', async () => {
+        const local = null;
+        const remote = {
+          books: [{ id: '1', title: 'Book A' }]
+        };
+        
+        const syncController = new SyncController(null, null);
+        const merged = syncController.mergeData(local, remote);
+        
+        assert(merged.books.length === 1, 'Should have 1 book from remote');
+        assert(merged.books[0].title === 'Book A', 'Should have Book A');
+      });
+
+      // Test 6: Empty remote
+      await runTest('Merge: Empty remote uses local', async () => {
+        const local = {
+          books: [{ id: '1', title: 'Book A' }]
+        };
+        const remote = null;
+        
+        const syncController = new SyncController(null, null);
+        const merged = syncController.mergeData(local, remote);
+        
+        assert(merged.books.length === 1, 'Should have 1 book from local');
+        assert(merged.books[0].title === 'Book A', 'Should have Book A');
+      });
+
+      // Test 7: Complex multi-device scenario
+      await runTest('Merge: Complex scenario (3 books, 2 new, 1 updated)', async () => {
+        const local = {
+          books: [
+            { id: '1', title: 'Book A', updatedAt: '2026-04-10T01:00:00Z' },
+            { id: '2', title: 'Book B (updated locally)', updatedAt: '2026-04-10T02:00:00Z' }
+          ],
+          readers: ['Alice']
+        };
+        
+        const remote = {
+          books: [
+            { id: '1', title: 'Book A', updatedAt: '2026-04-10T01:00:00Z' },
+            { id: '2', title: 'Book B (original)', updatedAt: '2026-04-10T01:30:00Z' },
+            { id: '3', title: 'Book C', updatedAt: '2026-04-10T01:45:00Z' }
+          ],
+          readers: ['Bob']
+        };
+        
+        const syncController = new SyncController(null, null);
+        const merged = syncController.mergeData(local, remote);
+        
+        // Should have all 3 books
+        assert(merged.books.length === 3, `Expected 3 books, got ${merged.books.length}`);
+        
+        // Book 2 local is newer, should win
+        const book2 = merged.books.find(b => b.id === '2');
+        assert(book2.title === 'Book B (updated locally)', `Expected local version, got '${book2.title}'`);
+        
+        // Should have both readers
+        assert(merged.readers.length === 2, `Expected 2 readers, got ${merged.readers.length}`);
+      });
+
+      // Test 8: Timestamp fallback to createdAt
+      await runTest('Merge: Use createdAt when updatedAt missing', async () => {
+        const local = {
+          books: [
+            { id: '1', title: 'Book A v1', createdAt: '2026-04-10T01:00:00Z' }
+          ]
+        };
+        
+        const remote = {
+          books: [
+            { id: '1', title: 'Book A v2', createdAt: '2026-04-10T02:00:00Z' }
+          ]
+        };
+        
+        const syncController = new SyncController(null, null);
+        const merged = syncController.mergeData(local, remote);
+        
+        // Remote createdAt is newer, should win
+        assert(merged.books[0].title === 'Book A v2', `Expected remote version, got '${merged.books[0].title}'`);
+      });
+    }
+  </script>
+
+  <!-- Load framework modules -->
+  <script src="./framework/core/sync-controller.js"></script>
+</body>
+</html>

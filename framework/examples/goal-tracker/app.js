@@ -63,15 +63,27 @@ async function initializeSync(token, owner, repo) {
       document.getElementById('sync-status').textContent = '🔄';
     });
     
-    syncController.on('syncComplete', () => {
+    syncController.on('syncComplete', (results) => {
       appState.set('isSyncing', false);
       document.getElementById('sync-status').textContent = '●';
+      
+      if (results.errors && results.errors.length > 0) {
+        // Partial sync failure
+        toast.warning(`Sync completed with ${results.errors.length} error(s)`, 5000);
+      } else if (results.merged > 0) {
+        // Data was merged with remote changes
+        toast.info(`Sync complete! Merged ${results.merged} change(s) from other devices`, 4000);
+      } else if (results.uploaded > 0 || results.downloaded > 0) {
+        toast.success(`Sync complete!`, 3000);
+      }
+      
       loadData();
     });
     
     syncController.on('syncError', (error) => {
       appState.set('isSyncing', false);
       document.getElementById('sync-status').textContent = '⚠️';
+      toast.error(`Sync failed: ${error.message}`, 5000);
     });
     
     syncController.start();

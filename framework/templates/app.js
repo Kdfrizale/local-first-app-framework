@@ -76,13 +76,24 @@ async function setupGitHubSync(token, owner, repo) {
   syncController.on('syncComplete', (results) => {
     appState.set('isSyncing', false);
     updateSyncButton(false);
-    toast.success(`Sync complete! ${results.uploaded} uploaded`);
+    
+    // Check for partial sync failures
+    if (results.errors && results.errors.length > 0) {
+      toast.warning(`Sync completed with ${results.errors.length} error(s)`, 5000);
+    } else if (results.uploaded > 0 || results.downloaded > 0) {
+      toast.success(`Sync complete! ${results.uploaded} uploaded, ${results.downloaded} downloaded`, 3000);
+    }
+    
+    // Reload data if anything changed
+    if (results.uploaded > 0 || results.downloaded > 0) {
+      loadData();
+    }
   });
   
   syncController.on('syncError', (error) => {
     appState.set('isSyncing', false);
     updateSyncButton(false);
-    toast.error(`Sync failed: ${error.message}`);
+    toast.error(`Sync failed: ${error.message}`, 5000);
   });
   
   // Start automatic syncing

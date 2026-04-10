@@ -54,6 +54,50 @@ A zero-dependency framework for building simple, beautiful, long-lasting web app
 - [Creating a New App](framework/docs/creating-new-app.md)
 - [GitHub Setup](framework/docs/github-setup.md)
 - [Architecture Details](framework/docs/architecture.md)
+- [Testing Guide](TESTING.md) - Testing procedures and error handling
+- [Multi-Device Sync](MERGE_DOCUMENTATION.md) - How data merges across devices
+
+## 🔄 Multi-Device Support
+
+The framework intelligently merges data when using the same app on multiple devices:
+
+- ✅ Add records on different devices - both are kept
+- ✅ Edit same record on different devices - newer version wins
+- ✅ Simple arrays (tags, readers) - automatically combined
+- ✅ Timestamps track which version is newer
+- ✅ Toast notifications show when data was merged
+
+See [MERGE_DOCUMENTATION.md](MERGE_DOCUMENTATION.md) for details on how merging works.
+
+## 🧪 Testing
+
+The framework includes comprehensive testing capabilities:
+
+**Browser-based tests:**
+- Open `test-runner.html` for framework module tests
+- Open `test-error-scenarios.html` for sync error handling tests
+- Open `test-merge-scenarios.html` for multi-device merge tests
+
+**Manual testing:**
+- See [TESTING.md](TESTING.md) for complete testing guide
+- Includes checklists for all scenarios (offline, sync, errors, UI/UX)
+
+**Error handling:**
+- All apps show user-friendly toast notifications for sync errors
+- Red error toasts for failures (5s duration)
+- Orange warning toasts for partial sync failures (5s duration)
+- Blue info toasts for data merges (4s duration)
+- Green success toasts for successful syncs (3s duration)
+
+Run tests:
+```bash
+# Start server
+python3 -m http.server 8000
+
+# Open test pages
+http://localhost:8000/test-runner.html
+http://localhost:8000/test-error-scenarios.html
+```
 
 ## 🛠️ Technology Stack
 

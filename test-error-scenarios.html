@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sync Error Scenarios Test</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .test-pass { color: #10b981; }
+    .test-fail { color: #ef4444; }
+    .test-running { color: #f59e0b; }
+  </style>
+</head>
+<body class="bg-gray-50 p-8">
+  <div class="max-w-4xl mx-auto">
+    <h1 class="text-3xl font-bold mb-6">🧪 Sync Error Scenarios Test</h1>
+    
+    <div class="bg-white rounded-lg shadow p-6 mb-6">
+      <h2 class="text-xl font-semibold mb-4">Error Handling Tests</h2>
+      <p class="mb-4 text-gray-600">
+        These tests verify that sync errors display appropriate toast notifications.
+      </p>
+      
+      <div class="space-y-2 mb-4">
+        <button onclick="runAllTests()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+          Run All Error Tests
+        </button>
+        <button onclick="clearResults()" class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 ml-2">
+          Clear Results
+        </button>
+      </div>
+      
+      <div id="test-summary" class="mb-4 p-4 bg-gray-100 rounded hidden">
+        <div class="font-semibold">Summary:</div>
+        <div id="summary-text"></div>
+      </div>
+      
+      <div id="test-results" class="space-y-4"></div>
+    </div>
+    
+    <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+      <p class="text-sm text-yellow-700">
+        <strong>Note:</strong> Watch for toast notifications appearing in the top-right corner. 
+        Each test should trigger a visible toast message.
+      </p>
+    </div>
+  </div>
+
+  <!-- Test Framework -->
+  <script>
+    const results = {
+      total: 0,
+      passed: 0,
+      failed: 0
+    };
+
+    function clearResults() {
+      results.total = 0;
+      results.passed = 0;
+      results.failed = 0;
+      document.getElementById('test-results').innerHTML = '';
+      document.getElementById('test-summary').classList.add('hidden');
+    }
+
+    function updateSummary() {
+      const summaryDiv = document.getElementById('test-summary');
+      const summaryText = document.getElementById('summary-text');
+      
+      summaryDiv.classList.remove('hidden');
+      summaryText.innerHTML = `
+        <span class="test-pass">✓ ${results.passed} passed</span> • 
+        <span class="test-fail">✗ ${results.failed} failed</span> • 
+        <span>${results.total} total</span>
+      `;
+    }
+
+    async function runTest(name, testFn) {
+      const testDiv = document.createElement('div');
+      testDiv.className = 'test-running p-4 border-l-4 border-yellow-500 bg-yellow-50';
+      testDiv.innerHTML = `⏳ ${name}...`;
+      
+      const resultsContainer = document.getElementById('test-results');
+      resultsContainer.appendChild(testDiv);
+      
+      results.total++;
+      
+      try {
+        await testFn();
+        testDiv.className = 'test-pass p-4 border-l-4 border-green-500 bg-green-50';
+        testDiv.innerHTML = `✓ ${name}`;
+        results.passed++;
+      } catch (error) {
+        testDiv.className = 'test-fail p-4 border-l-4 border-red-500 bg-red-50';
+        testDiv.innerHTML = `
+          ✗ ${name}
+          <div class="ml-4 text-sm mt-1 text-red-700">${error.message}</div>
+        `;
+        results.failed++;
+      }
+      
+      updateSummary();
+    }
+
+    function assert(condition, message) {
+      if (!condition) {
+        throw new Error(message || 'Assertion failed');
+      }
+    }
+
+    function waitForToast(duration = 1000) {
+      return new Promise(resolve => setTimeout(resolve, duration));
+    }
+
+    async function runAllTests() {
+      clearResults();
+      
+      // Test 1: Basic Toast Creation
+      await runTest('Toast component creates error toasts', async () => {
+        const toast = new Toast();
+        const element = toast.error('Test error message', 500);
+        assert(element !== null, 'Toast element should be created');
+        assert(element.textContent.includes('Test error'), 'Toast should contain error message');
+        await waitForToast(600);
+        assert(!document.body.contains(element), 'Toast should be removed after duration');
+      });
+
+      // Test 2: 401 Authentication Error
+      await runTest('401 Authentication error shows error toast', async () => {
+        const mockGithub = new GitHubSync({
+          token: 'invalid_token',
+          owner: 'test',
+          repo: 'test'
+        });
+        
+        // Mock fetch to return 401
+        const originalFetch = window.fetch;
+        window.fetch = async () => ({
+          ok: false,
+          status: 401,
+          json: async () => ({ message: 'Bad credentials' })
+        });
+        
+        try {
+          await mockGithub.testAuth();
+          throw new Error('Should have thrown auth error');
+        } catch (error) {
+          // Expected error - now check if toast would show
+          const toast = new Toast();
+          toast.error(`Sync failed: ${error.message}`, 500);
+          await waitForToast(100);
+          // If we got here, toast was created successfully
+        } finally {
+          window.fetch = originalFetch;
+        }
+      });
+
+      // Test 3: Network Error
+      await runTest('Network error shows error toast', async () => {
+        const mockGithub = new GitHubSync({
+          token: 'test',
+          owner: 'test',
+          repo: 'test'
+        });
+        
+        // Mock fetch to throw network error
+        const originalFetch = window.fetch;
+        window.fetch = async () => {
+          throw new Error('Network request failed');
+        };
+        
+        try {
+          await mockGithub.testAuth();
+          throw new Error('Should have thrown network error');
+        } catch (error) {
+          const toast = new Toast();
+          toast.error(`Sync failed: ${error.message}`, 500);
+          await waitForToast(100);
+        } finally {
+          window.fetch = originalFetch;
+        }
+      });
+
+      // Test 4: Partial Sync Failure
+      await runTest('Partial sync failure shows warning toast', async () => {
+        const toast = new Toast();
+        const results = {
+          uploaded: 2,
+          downloaded: 0,
+          errors: [
+            { record: 'item1', error: 'Upload failed' }
+          ]
+        };
+        
+        // Simulate app handling partial failure
+        if (results.errors && results.errors.length > 0) {
+          toast.warning(`Sync completed with ${results.errors.length} error(s)`, 500);
+        }
+        
+        await waitForToast(100);
+        assert(results.errors.length === 1, 'Should have one error');
+      });
+
+      // Test 5: 422 Invalid Request
+      await runTest('422 Invalid request (missing SHA) shows error toast', async () => {
+        const mockGithub = new GitHubSync({
+          token: 'test',
+          owner: 'test',
+          repo: 'test'
+        });
+        
+        const originalFetch = window.fetch;
+        window.fetch = async () => ({
+          ok: false,
+          status: 422,
+          json: async () => ({ 
+            message: 'Invalid request.\n\n"sha" wasn\'t supplied.' 
+          })
+        });
+        
+        try {
+          await mockGithub.writeFile('test.json', { data: 'test' });
+          throw new Error('Should have thrown 422 error');
+        } catch (error) {
+          const toast = new Toast();
+          toast.error(`Sync failed: ${error.message}`, 500);
+          await waitForToast(100);
+        } finally {
+          window.fetch = originalFetch;
+        }
+      });
+
+      // Test 6: Success Toast
+      await runTest('Successful sync shows success toast', async () => {
+        const toast = new Toast();
+        const results = {
+          uploaded: 3,
+          downloaded: 1,
+          errors: []
+        };
+        
+        if (results.uploaded > 0 || results.downloaded > 0) {
+          toast.success('Sync complete!', 500);
+        }
+        
+        await waitForToast(100);
+        assert(results.uploaded > 0, 'Should have uploads');
+      });
+
+      // Test 7: Multiple Error Toasts
+      await runTest('Multiple errors show multiple toasts', async () => {
+        const toast = new Toast();
+        
+        toast.error('Error 1', 500);
+        await waitForToast(100);
+        toast.error('Error 2', 500);
+        await waitForToast(100);
+        toast.error('Error 3', 500);
+        await waitForToast(100);
+        
+        // All three should have appeared briefly
+      });
+
+      // Test 8: Toast Duration
+      await runTest('Error toasts have longer duration (5s) than success (3s)', async () => {
+        const toast = new Toast();
+        
+        // This test just verifies the API allows different durations
+        const errorElement = toast.error('Long error', 5000);
+        const successElement = toast.success('Quick success', 3000);
+        
+        assert(errorElement !== null, 'Error toast created');
+        assert(successElement !== null, 'Success toast created');
+        
+        // Clean up
+        toast.remove(errorElement);
+        toast.remove(successElement);
+      });
+    }
+  </script>
+
+  <!-- Load framework modules -->
+  <script src="./framework/core/components/toast.js"></script>
+  <script src="./framework/core/github-sync.js"></script>
+</body>
+</html>

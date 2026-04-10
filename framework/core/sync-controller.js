@@ -89,14 +89,18 @@ class SyncController {
         uploaded: 0,
         downloaded: 0,
         conflicts: 0,
+        merged: 0,  // Track merge operations
         errors: []
       };
 
       // Upload unsynced records
       for (const record of unsyncedRecords) {
         try {
-          await this._uploadRecord(record);
+          const uploadResult = await this._uploadRecord(record);
           results.uploaded++;
+          if (uploadResult?.merged) {
+            results.merged++;
+          }
         } catch (error) {
           console.error(`Error uploading ${record.id}:`, error);
           results.errors.push({
@@ -177,6 +181,111 @@ class SyncController {
   }
 
   /**
+   * Merge local and remote data intelligently
+   * @param {Object} local - Local data
+   * @param {Object} remote - Remote data from GitHub
+   * @returns {Object} - Merged data
+   */
+  mergeData(local, remote) {
+    if (!local) return remote;
+    if (!remote) return local;
+
+    console.log('[SyncController] Merging data:', { local, remote });
+
+    const merged = {};
+
+    // Merge all top-level keys
+    const allKeys = new Set([...Object.keys(local), ...Object.keys(remote)]);
+
+    for (const key of allKeys) {
+      const localValue = local[key];
+      const remoteValue = remote[key];
+
+      // If only one side has the value, use it
+      if (localValue === undefined) {
+        merged[key] = remoteValue;
+        continue;
+      }
+      if (remoteValue === undefined) {
+        merged[key] = localValue;
+        continue;
+      }
+
+      // Both sides have the value - merge based on type
+      if (Array.isArray(localValue) && Array.isArray(remoteValue)) {
+        // Check if it's an array of objects with IDs
+        const hasIds = localValue.length > 0 && localValue[0]?.id !== undefined;
+        
+        if (hasIds) {
+          // Merge arrays of records by ID
+          merged[key] = this._mergeRecordArrays(localValue, remoteValue);
+        } else {
+          // Simple array - union merge
+          merged[key] = this._mergeSimpleArrays(localValue, remoteValue);
+        }
+      } else if (typeof localValue === 'object' && typeof remoteValue === 'object') {
+        // Nested object - recursive merge
+        merged[key] = this.mergeData(localValue, remoteValue);
+      } else {
+        // Primitive value - use remote (GitHub is source of truth)
+        merged[key] = remoteValue;
+      }
+    }
+
+    // Update lastUpdated to now
+    merged.lastUpdated = new Date().toISOString();
+
+    console.log('[SyncController] Merge result:', merged);
+    return merged;
+  }
+
+  /**
+   * Merge arrays of records (objects with ID and timestamps)
+   */
+  _mergeRecordArrays(localArray, remoteArray) {
+    const merged = new Map();
+
+    // Add all remote records first
+    for (const record of remoteArray) {
+      merged.set(record.id, record);
+    }
+
+    // Add or update with local records
+    for (const localRecord of localArray) {
+      const existingRecord = merged.get(localRecord.id);
+
+      if (!existingRecord) {
+        // New local record - add it
+        merged.set(localRecord.id, localRecord);
+      } else {
+        // Record exists on both sides - use timestamp to resolve
+        const localTime = new Date(localRecord.updatedAt || localRecord.createdAt || 0);
+        const remoteTime = new Date(existingRecord.updatedAt || existingRecord.createdAt || 0);
+
+        if (localTime > remoteTime) {
+          // Local is newer
+          merged.set(localRecord.id, localRecord);
+          console.log(`[SyncController] Local record newer for ID ${localRecord.id}`);
+        } else {
+          // Remote is newer or same - keep remote
+          console.log(`[SyncController] Remote record newer for ID ${localRecord.id}`);
+        }
+      }
+    }
+
+    return Array.from(merged.values());
+  }
+
+  /**
+   * Merge simple arrays (strings, numbers) - union merge
+   */
+  _mergeSimpleArrays(localArray, remoteArray) {
+    // Union of both arrays, removing duplicates
+    const uniqueValues = new Set([...localArray, ...remoteArray]);
+    return Array.from(uniqueValues).sort();
+  }
+
+  /**
    * Upload data to GitHub
    * @param {string} localKey - Local storage key
    * @param {string} path - File path in GitHub repo
@@ -192,12 +301,25 @@ class SyncController {
 
       const message = commitMessage || `Update ${path}`;
       
-      // First, check if file exists on GitHub and get current SHA
+      // First, check if file exists on GitHub and get current SHA + data
       let currentSha = null;
+      let remoteData = null;
+      let dataToUpload = record.data;
+      
       try {
         const existing = await this.githubSync.readFile(path);
         if (existing && !existing.notFound) {
           currentSha = existing.sha;
+          remoteData = existing.content;
+          
+          // MERGE: Combine local and remote data
+          if (remoteData) {
+            console.log('[SyncController] Merging local and remote data before upload');
+            dataToUpload = this.mergeData(record.data, remoteData);
+            
+            // Save merged data locally
+            await this.localStorage.save(localKey, dataToUpload);
+          }
         }
       } catch (e) {
         // File doesn't exist yet, that's fine
@@ -206,15 +328,19 @@ class SyncController {
       
       const result = await this.githubSync.writeFile(
         path,
-        record.data,
-        currentSha,  // Use the SHA we just fetched from GitHub
+        dataToUpload,  // Upload merged data
+        currentSha,
         message
       );
 
       // Mark as synced with the new SHA
       await this.localStorage.markSynced(localKey, result.sha);
 
-      return { status: 'uploaded', sha: result.sha };
+      return { 
+        status: 'uploaded', 
+        sha: result.sha,
+        merged: remoteData !== null  // Indicate if merge occurred
+      };
 
     } catch (error) {
       if (error.message.includes('Conflict')) {
@@ -233,7 +359,7 @@ class SyncController {
     // This could be stored in record metadata or derived from record.id
     const path = record.githubPath || `apps/data/${record.id}.json`;
     
-    await this.uploadToGitHub(record.id, path);
+    return await this.uploadToGitHub(record.id, path);
   }
 
   /**

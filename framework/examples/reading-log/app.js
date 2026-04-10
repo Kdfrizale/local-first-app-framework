@@ -66,10 +66,18 @@ async function setupGitHubSync(token, owner, repo) {
   syncController.on('syncComplete', (results) => {
     appState.set('isSyncing', false);
     updateSyncButton(false);
-    if (results.uploaded > 0 || results.downloaded > 0) {
+    
+    if (results.errors && results.errors.length > 0) {
+      // Partial sync failure
+      toast.warning(`Sync completed with ${results.errors.length} error(s)`, 5000);
+    } else if (results.merged > 0) {
+      // Data was merged with remote changes
+      toast.info(`Sync complete! Merged ${results.merged} change(s) from other devices`, 4000);
+    } else if (results.uploaded > 0 || results.downloaded > 0) {
       toast.success(`Sync complete!`);
-      loadData();
     }
+    
+    loadData();
   });
   
   syncController.on('syncError', (error) => {
@@ -325,11 +333,13 @@ function showAddBookModal() {
             const data = FormHelper.getData(form);
             delete data.readers; // Remove from form data, we handle it separately
             
+            const now = new Date().toISOString();
             const newBook = {
               id: Date.now().toString(),
               ...data,
               readers: selectedReaders, // Store as array
-              createdAt: new Date().toISOString()
+              createdAt: now,
+              updatedAt: now  // Add updatedAt timestamp
             };
             
             // Create new array to trigger state change notification

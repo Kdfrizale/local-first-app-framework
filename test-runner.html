@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Framework Test Runner</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .test-pass { color: #10b981; }
+    .test-fail { color: #ef4444; }
+    .test-running { color: #f59e0b; }
+  </style>
+</head>
+<body class="bg-gray-50 p-8">
+  <div class="max-w-4xl mx-auto">
+    <h1 class="text-3xl font-bold mb-6">🧪 Framework Test Runner</h1>
+    
+    <div class="bg-white rounded-lg shadow p-6 mb-6">
+      <h2 class="text-xl font-semibold mb-4">Test Suites</h2>
+      <div id="test-controls" class="space-y-2 mb-4">
+        <button onclick="runAllTests()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+          Run All Tests
+        </button>
+        <button onclick="clearResults()" class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 ml-2">
+          Clear Results
+        </button>
+      </div>
+      
+      <div id="test-summary" class="mb-4 p-4 bg-gray-100 rounded hidden">
+        <div class="font-semibold">Summary:</div>
+        <div id="summary-text"></div>
+      </div>
+      
+      <div id="test-results" class="space-y-4"></div>
+    </div>
+  </div>
+
+  <!-- Test Framework -->
+  <script>
+    const results = {
+      total: 0,
+      passed: 0,
+      failed: 0,
+      suites: []
+    };
+
+    function clearResults() {
+      results.total = 0;
+      results.passed = 0;
+      results.failed = 0;
+      results.suites = [];
+      document.getElementById('test-results').innerHTML = '';
+      document.getElementById('test-summary').classList.add('hidden');
+    }
+
+    function updateSummary() {
+      const summaryDiv = document.getElementById('test-summary');
+      const summaryText = document.getElementById('summary-text');
+      
+      summaryDiv.classList.remove('hidden');
+      summaryText.innerHTML = `
+        <span class="test-pass">✓ ${results.passed} passed</span> • 
+        <span class="test-fail">✗ ${results.failed} failed</span> • 
+        <span>${results.total} total</span>
+      `;
+    }
+
+    async function runTest(name, testFn) {
+      const testDiv = document.createElement('div');
+      testDiv.className = 'test-running';
+      testDiv.innerHTML = `⏳ ${name}...`;
+      
+      const resultsContainer = document.getElementById('test-results');
+      resultsContainer.appendChild(testDiv);
+      
+      results.total++;
+      
+      try {
+        await testFn();
+        testDiv.className = 'test-pass';
+        testDiv.innerHTML = `✓ ${name}`;
+        results.passed++;
+      } catch (error) {
+        testDiv.className = 'test-fail';
+        testDiv.innerHTML = `
+          ✗ ${name}
+          <div class="ml-4 text-sm mt-1">${error.message}</div>
+        `;
+        results.failed++;
+      }
+      
+      updateSummary();
+    }
+
+    function assert(condition, message) {
+      if (!condition) {
+        throw new Error(message || 'Assertion failed');
+      }
+    }
+
+    function assertEquals(actual, expected, message) {
+      if (actual !== expected) {
+        throw new Error(message || `Expected ${expected}, got ${actual}`);
+      }
+    }
+
+    // Example test suite
+    async function runAllTests() {
+      clearResults();
+      
+      // Basic module loading tests
+      await runTest('GitHubSync module loads', async () => {
+        assert(typeof GitHubSync !== 'undefined', 'GitHubSync should be defined');
+      });
+      
+      await runTest('LocalStorage module loads', async () => {
+        assert(typeof LocalStorage !== 'undefined', 'LocalStorage should be defined');
+      });
+      
+      await runTest('SyncController module loads', async () => {
+        assert(typeof SyncController !== 'undefined', 'SyncController should be defined');
+      });
+      
+      await runTest('State module loads', async () => {
+        assert(typeof State !== 'undefined', 'State should be defined');
+      });
+      
+      await runTest('Router module loads', async () => {
+        assert(typeof Router !== 'undefined', 'Router should be defined');
+      });
+      
+      await runTest('Toast component loads', async () => {
+        assert(typeof Toast !== 'undefined', 'Toast should be defined');
+      });
+      
+      await runTest('Modal component loads', async () => {
+        assert(typeof Modal !== 'undefined', 'Modal should be defined');
+      });
+      
+      // State tests
+      await runTest('State: set and get values', async () => {
+        const state = new State({ count: 0 });
+        assertEquals(state.get('count'), 0);
+        state.set('count', 5);
+        assertEquals(state.get('count'), 5);
+      });
+      
+      await runTest('State: subscription notifications', async () => {
+        const state = new State({ value: 'initial' });
+        let notified = false;
+        state.subscribe('value', (newVal) => {
+          notified = true;
+          assertEquals(newVal, 'changed');
+        });
+        state.set('value', 'changed');
+        assert(notified, 'Subscription should be notified');
+      });
+      
+      // Toast tests
+      await runTest('Toast: show and remove', async () => {
+        const toast = new Toast();
+        const element = toast.show('Test message', 'info', 100);
+        assert(element !== null, 'Toast element should be created');
+        await new Promise(r => setTimeout(r, 150));
+        assert(!document.body.contains(element), 'Toast should be removed after duration');
+      });
+      
+      await runTest('Toast: success type', async () => {
+        const toast = new Toast();
+        const element = toast.success('Success!', 100);
+        assert(element.innerHTML.includes('Success!'), 'Toast should contain message');
+      });
+      
+      await runTest('Toast: error type', async () => {
+        const toast = new Toast();
+        const element = toast.error('Error!', 100);
+        assert(element.innerHTML.includes('Error!'), 'Toast should contain error message');
+      });
+    }
+  </script>
+
+  <!-- Load framework modules -->
+  <script src="./framework/core/state.js"></script>
+  <script src="./framework/core/router.js"></script>
+  <script src="./framework/core/components/toast.js"></script>
+  <script src="./framework/core/components/modal.js"></script>
+  <script src="./framework/core/components/form.js"></script>
+  <script src="./framework/core/components/list.js"></script>
+  <script src="./framework/core/local-storage.js"></script>
+  <script src="./framework/core/github-sync.js"></script>
+  <script src="./framework/core/sync-controller.js"></script>
+</body>
+</html>
