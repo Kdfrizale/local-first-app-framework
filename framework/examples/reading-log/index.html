@@ -147,11 +147,11 @@
         <!-- ISBN Lookup -->
         <div class="mb-4 p-4 bg-purple-50 rounded-lg border border-purple-200">
           <label class="block text-sm font-medium text-purple-700 mb-2">📖 Quick Add by ISBN</label>
-          <div class="flex gap-2">
+          <div class="flex flex-wrap gap-2">
             <input type="text" id="isbn-input" placeholder="Enter ISBN (e.g., 9780140449136)"
-              class="flex-1 px-3 py-2 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+              class="flex-1 min-w-[200px] px-3 py-2 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent">
             <button type="button" id="isbn-lookup-btn"
-              class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-medium transition flex items-center gap-2">
+              class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 sm:flex-none">
               <span id="isbn-lookup-icon">🔍</span>
               <span>Lookup</span>
             </button>

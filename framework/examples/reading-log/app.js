@@ -348,10 +348,10 @@ class ReadingLogApp extends App {
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">ISBN</label>
-                <div class="flex gap-2">
+                <div class="flex flex-wrap gap-2">
                   <input type="text" name="isbn" id="edit-isbn-input" value="${this.escapeHtml(book.isbn || '')}"
-                    class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="Optional">
-                  <button type="button" id="edit-isbn-lookup-btn" class="px-3 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm hover:bg-purple-200">🔍</button>
+                    class="flex-1 min-w-[180px] px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="Optional">
+                  <button type="button" id="edit-isbn-lookup-btn" class="px-3 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm hover:bg-purple-200 sm:flex-none">🔍 Lookup</button>
                 </div>
               </div>
             </div>
