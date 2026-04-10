@@ -3,22 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Family Meal Planner - Plan weekly meals for your family">
-  <title>Meal Planner - Local First</title>
+  <title>Meal Planner</title>
   
-  <!-- Tailwind CSS CDN -->
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <!-- PWA Manifest -->
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#059669">
-  
-  <!-- iOS PWA Support -->
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Meal Planner">
-  
   <style>
+    /* Toast notifications */
     #toast-container {
       position: fixed;
       top: 1rem;
@@ -26,48 +17,64 @@
       z-index: 9999;
     }
     
+    .toast {
+      background: white;
+      padding: 0.75rem 1rem;
+      border-radius: 0.5rem;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      animation: slideIn 0.3s ease;
+    }
+    
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    
+    .toast-success { border-left: 4px solid #10b981; }
+    .toast-error { border-left: 4px solid #ef4444; }
+    .toast-info { border-left: 4px solid #3b82f6; }
+    .toast-warning { border-left: 4px solid #f59e0b; }
+    
+    /* Modal */
     .modal-backdrop {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.5);
+      background: rgba(0,0,0,0.5);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 9998;
       opacity: 0;
-      transition: opacity 0.3s ease;
+      transition: opacity 0.2s;
     }
     
-    .modal-backdrop.show {
-      opacity: 1;
-    }
+    .modal-backdrop.show { opacity: 1; }
     
     .modal-dialog {
       background: white;
-      border-radius: 0.5rem;
-      max-width: 500px;
+      border-radius: 0.75rem;
       width: 90%;
+      max-width: 500px;
       max-height: 90vh;
-      overflow-y: auto;
+      overflow: auto;
       transform: scale(0.9);
-      transition: transform 0.3s ease;
+      transition: transform 0.2s;
     }
     
-    .modal-backdrop.show .modal-dialog {
-      transform: scale(1);
-    }
+    .modal-backdrop.show .modal-dialog { transform: scale(1); }
     
     .modal-header {
       padding: 1rem 1.5rem;
       border-bottom: 1px solid #e5e7eb;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+      font-weight: 600;
+      font-size: 1.125rem;
     }
     
-    .modal-body {
-      padding: 1.5rem;
-    }
+    .modal-body { padding: 1.5rem; }
     
     .modal-footer {
       padding: 1rem 1.5rem;
@@ -77,119 +84,146 @@
       gap: 0.5rem;
     }
     
-    .meal-slot {
-      min-height: 60px;
-      transition: all 0.2s ease;
+    /* Meal grid */
+    .meal-cell {
+      min-height: 70px;
+      cursor: pointer;
+      transition: all 0.2s;
     }
     
-    .meal-slot:hover {
+    .meal-cell:hover {
+      background-color: #ecfdf5;
+    }
+    
+    .today-column {
       background-color: #f0fdf4;
-    }
-    
-    .day-column {
-      min-width: 140px;
     }
   </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
-  <!-- Toast Container -->
-  <div id="toast-container"></div>
-  
+<body class="bg-gray-100 min-h-screen">
   <!-- Header -->
-  <header class="bg-emerald-600 text-white shadow-lg">
-    <div class="max-w-7xl mx-auto px-4 py-4">
-      <div class="flex justify-between items-center">
-        <div>
-          <h1 class="text-2xl font-bold">🍽️ Meal Planner</h1>
-          <p class="text-emerald-100 text-sm">Plan your family's weekly meals</p>
-        </div>
-        <div class="flex items-center space-x-3">
-          <span id="sync-status" class="text-sm text-emerald-200">●</span>
-          <button onclick="manualSync()" class="px-4 py-2 bg-emerald-700 rounded-md hover:bg-emerald-800 text-sm">
-            Sync
-          </button>
-          <button onclick="showSettings()" class="p-2 hover:bg-emerald-700 rounded-full">
-            ⚙️
-          </button>
-        </div>
+  <header class="bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg">
+    <div class="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+      <h1 class="text-2xl font-bold flex items-center gap-2">
+        🍽️ Meal Planner
+      </h1>
+      <div class="flex gap-2">
+        <button id="sync-btn" class="flex items-center gap-1 bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg transition">
+          <span id="sync-icon">🔄</span>
+          <span class="hidden sm:inline">Sync</span>
+        </button>
+        <button id="settings-btn" class="bg-white/20 hover:bg-white/30 px-3 py-2 rounded-lg transition">
+          ⚙️
+        </button>
       </div>
     </div>
   </header>
-
-  <!-- Main Content -->
-  <main class="max-w-7xl mx-auto px-4 py-6">
+  
+  <main class="max-w-6xl mx-auto px-4 py-6">
     <!-- Week Navigation -->
-    <div class="flex justify-between items-center mb-6">
-      <button onclick="previousWeek()" class="px-4 py-2 bg-white rounded-md shadow hover:bg-gray-50">
-        ← Previous
-      </button>
-      <h2 id="week-display" class="text-xl font-semibold text-gray-800"></h2>
-      <button onclick="nextWeek()" class="px-4 py-2 bg-white rounded-md shadow hover:bg-gray-50">
-        Next →
-      </button>
+    <div class="bg-white rounded-xl shadow-sm p-4 mb-6">
+      <div class="flex justify-between items-center">
+        <button id="prev-week-btn" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition">
+          ← Previous
+        </button>
+        <div class="text-center">
+          <h2 id="week-display" class="text-xl font-bold text-gray-800"></h2>
+          <button id="today-btn" class="text-sm text-emerald-600 hover:text-emerald-700 mt-1">
+            Go to Today
+          </button>
+        </div>
+        <button id="next-week-btn" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition">
+          Next →
+        </button>
+      </div>
     </div>
     
     <!-- Meal Grid -->
-    <div class="bg-white rounded-lg shadow overflow-x-auto">
-      <table class="w-full">
-        <thead>
-          <tr class="bg-emerald-50">
-            <th class="p-3 text-left text-sm font-semibold text-gray-700 border-b">Meal</th>
-            <th id="day-0" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
-            <th id="day-1" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
-            <th id="day-2" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
-            <th id="day-3" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
-            <th id="day-4" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
-            <th id="day-5" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
-            <th id="day-6" class="day-column p-3 text-center text-sm font-semibold text-gray-700 border-b"></th>
-          </tr>
-        </thead>
-        <tbody id="meal-grid">
-          <!-- Populated by JavaScript -->
-        </tbody>
-      </table>
-    </div>
-    
-    <!-- Quick Stats -->
-    <div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-      <div class="bg-white rounded-lg shadow p-4">
-        <h3 class="text-sm font-medium text-gray-500">Meals Planned</h3>
-        <p id="stat-planned" class="text-2xl font-bold text-emerald-600">0</p>
-      </div>
-      <div class="bg-white rounded-lg shadow p-4">
-        <h3 class="text-sm font-medium text-gray-500">Unique Recipes</h3>
-        <p id="stat-recipes" class="text-2xl font-bold text-emerald-600">0</p>
-      </div>
-      <div class="bg-white rounded-lg shadow p-4">
-        <h3 class="text-sm font-medium text-gray-500">Shopping List Items</h3>
-        <p id="stat-shopping" class="text-2xl font-bold text-emerald-600">0</p>
-        <button onclick="showShoppingList()" class="mt-2 text-sm text-emerald-600 hover:text-emerald-800">View List →</button>
+    <div class="bg-white rounded-xl shadow-sm overflow-hidden mb-6">
+      <div class="overflow-x-auto">
+        <table class="w-full">
+          <thead>
+            <tr class="bg-emerald-50">
+              <th class="p-3 text-left text-sm font-semibold text-gray-700 border-b w-24">Meal</th>
+              <th id="day-0" class="p-3 text-center text-sm font-semibold text-gray-700 border-b min-w-[120px]"></th>
+              <th id="day-1" class="p-3 text-center text-sm font-semibold text-gray-700 border-b min-w-[120px]"></th>
+              <th id="day-2" class="p-3 text-center text-sm font-semibold text-gray-700 border-b min-w-[120px]"></th>
+              <th id="day-3" class="p-3 text-center text-sm font-semibold text-gray-700 border-b min-w-[120px]"></th>
+              <th id="day-4" class="p-3 text-center text-sm font-semibold text-gray-700 border-b min-w-[120px]"></th>
+              <th id="day-5" class="p-3 text-center text-sm font-semibold text-gray-700 border-b min-w-[120px]"></th>
+              <th id="day-6" class="p-3 text-center text-sm font-semibold text-gray-700 border-b min-w-[120px]"></th>
+            </tr>
+          </thead>
+          <tbody id="meal-grid">
+            <!-- Populated by JavaScript -->
+          </tbody>
+        </table>
       </div>
     </div>
     
-    <!-- Favorite Meals -->
-    <div class="mt-6 bg-white rounded-lg shadow p-4">
+    <!-- Stats & Favorites -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <!-- Stats -->
+      <div class="bg-white rounded-xl shadow-sm p-6">
+        <h3 class="font-semibold text-gray-800 mb-4">📊 This Week</h3>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="text-center">
+            <div id="stat-planned" class="text-3xl font-bold text-emerald-600">0</div>
+            <div class="text-sm text-gray-500">Meals Planned</div>
+          </div>
+          <div class="text-center">
+            <div id="stat-total" class="text-3xl font-bold text-teal-600">0</div>
+            <div class="text-sm text-gray-500">Total Meals</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Favorites -->
+      <div class="bg-white rounded-xl shadow-sm p-6 md:col-span-2">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="font-semibold text-gray-800">⭐ Favorite Meals</h3>
+          <button id="add-favorite-btn" class="px-3 py-1 bg-amber-100 text-amber-700 rounded-lg text-sm hover:bg-amber-200 transition">
+            + Add Favorite
+          </button>
+        </div>
+        <div id="favorites-container" class="flex flex-wrap gap-2">
+          <span class="text-gray-400 text-sm">No favorites yet. Save meals as favorites for quick access!</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Shopping List -->
+    <div class="mt-6 bg-white rounded-xl shadow-sm p-6">
       <div class="flex justify-between items-center mb-4">
-        <h3 class="text-lg font-semibold text-gray-800">⭐ Favorite Meals</h3>
-        <button onclick="showAddFavorite()" class="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-md hover:bg-emerald-200 text-sm">
-          + Add Favorite
+        <h3 class="font-semibold text-gray-800">🛒 Shopping List</h3>
+        <button id="clear-shopping-btn" class="text-sm text-gray-500 hover:text-red-600 transition">
+          Clear All
         </button>
       </div>
-      <div id="favorites-container" class="flex flex-wrap gap-2">
-        <!-- Populated by JavaScript -->
+      <div id="shopping-list" class="space-y-2">
+        <span class="text-gray-400 text-sm">No items yet. Add ingredients while planning meals!</span>
+      </div>
+      <div class="mt-4 flex gap-2">
+        <input type="text" id="shopping-input" placeholder="Add item..."
+          class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent">
+        <button id="add-shopping-btn" class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition">
+          Add
+        </button>
       </div>
     </div>
   </main>
-
+  
+  <div id="toast-container"></div>
+  <div id="offline-indicator" class="fixed bottom-4 left-1/2 -translate-x-1/2 bg-red-500 text-white px-4 py-2 rounded-lg hidden">
+    📴 You're offline
+  </div>
+  
   <!-- Framework Scripts -->
-  <script src="../../core/GitHubSync.js"></script>
   <script src="../../core/Storage.js"></script>
-  <script src="../../core/SyncController.js"></script>
   <script src="../../core/State.js"></script>
+  <script src="../../core/GitHubSync.js"></script>
   <script src="../../core/ui/Toast.js"></script>
   <script src="../../core/ui/Modal.js"></script>
-  <script src="../../core/ui/Form.js"></script>
-  <script src="../../core/ui/List.js"></script>
   <script src="../../core/App.js"></script>
   
   <!-- App Script -->
@@ -198,12 +232,10 @@
   <!-- Service Worker Registration -->
   <script>
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js')
-          .catch(err => console.log('Service Worker registration failed', err));
-      });
+      navigator.serviceWorker.register('./sw.js')
+        .then(reg => console.log('[SW] Registered:', reg.scope))
+        .catch(err => console.error('[SW] Registration failed:', err));
     }
   </script>
-  
 </body>
 </html>

@@ -79,6 +79,12 @@ class App {
       await this.onInit();
     }
     
+    // 7. Show setup screen for first-time users (after other init completes)
+    if (!this.github) {
+      // Use setTimeout to ensure UI is fully rendered first
+      setTimeout(() => this.showSetupScreen(), 100);
+    }
+    
     return this;
   }
 
@@ -353,6 +359,10 @@ class App {
       title: '🔗 Connect to GitHub',
       content: `
         <form id="github-setup-form">
+          <p class="text-sm text-gray-500 mb-4">
+            Connect to a GitHub repository to sync your data across devices.
+            You can skip this and use the app offline-only.
+          </p>
           <div class="mb-4">
             <label class="block text-sm font-medium text-gray-700 mb-1">Personal Access Token</label>
             <input type="password" name="token" required
@@ -374,7 +384,13 @@ class App {
         </form>
       `,
       buttons: [
-        { text: 'Cancel', onClick: () => modal.close() },
+        { 
+          text: 'Use Offline Only', 
+          onClick: () => {
+            modal.close();
+            this._showToast('Using offline mode. Click Settings → Reconfigure to connect later.', 'info');
+          }
+        },
         {
           text: 'Connect',
           primary: true,
@@ -415,7 +431,8 @@ class App {
           }
         }
       ],
-      closeOnBackdrop: false
+      closeOnBackdrop: false,
+      closeOnEscape: false
     });
   }
 
@@ -546,14 +563,28 @@ class App {
       }
     };
     
-    window.addEventListener('online', () => {
+    window.addEventListener('online', async () => {
       updateIndicator();
       this._showToast('Back online', 'success');
+      
+      // Auto-sync pending changes when coming back online
+      if (this.github) {
+        const record = await this.storage.loadRecord('appData');
+        if (record && !record.synced) {
+          console.log('[App] Back online - syncing pending changes...');
+          try {
+            await this._pushToGitHub(record.sha);
+            this._showToast('Pending changes synced!', 'success');
+          } catch (e) {
+            console.error('[App] Auto-sync failed:', e);
+          }
+        }
+      }
     });
     
     window.addEventListener('offline', () => {
       updateIndicator();
-      this._showToast('You are offline', 'warning');
+      this._showToast('You are offline. Changes will sync when reconnected.', 'warning');
     });
     
     updateIndicator();

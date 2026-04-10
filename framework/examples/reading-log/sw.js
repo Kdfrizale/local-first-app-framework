@@ -1,134 +1,128 @@
 /**
- * Service Worker for full offline functionality
+ * Service Worker for Reading Log - Full Offline Support
  */
 
-const CACHE_NAME = 'reading-log-v7';
-
-// All files needed for offline operation
-const URLS_TO_CACHE = [
+const CACHE_NAME = 'reading-log-v9';
+const APP_SHELL = [
   './',
   './index.html',
-  './app.js',
-  './manifest.json',
-  // Framework core
-  '../../core/github-sync.js',
-  '../../core/local-storage.js',
-  '../../core/sync-controller.js',
-  '../../core/router.js',
-  '../../core/state.js',
-  '../../core/components/toast.js',
-  '../../core/components/modal.js',
-  '../../core/components/form.js',
-  '../../core/components/list.js'
+  './app.js'
 ];
 
-// External CDN resources to cache
-const EXTERNAL_URLS = [
+// Framework files - cached separately to handle potential path issues
+const FRAMEWORK_FILES = [
+  '../../core/Storage.js',
+  '../../core/State.js',
+  '../../core/GitHubSync.js',
+  '../../core/App.js',
+  '../../core/ui/Toast.js',
+  '../../core/ui/Modal.js'
+];
+
+const CDN_URLS = [
   'https://cdn.tailwindcss.com'
 ];
 
-// Install event - cache all static assets
 self.addEventListener('install', (event) => {
-  console.log('[SW] Installing...');
-  
+  console.log('[SW] Installing Reading Log service worker...');
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(async (cache) => {
-        console.log('[SW] Caching app files...');
-        
-        // Cache local files
-        await cache.addAll(URLS_TO_CACHE);
-        
-        // Try to cache external CDN resources
-        for (const url of EXTERNAL_URLS) {
-          try {
-            const response = await fetch(url, { mode: 'cors' });
-            if (response.ok) {
-              await cache.put(url, response);
-              console.log('[SW] Cached external:', url);
-            }
-          } catch (e) {
-            console.log('[SW] Could not cache external:', url);
-          }
+    caches.open(CACHE_NAME).then(async (cache) => {
+      // Cache app shell (critical)
+      for (const url of APP_SHELL) {
+        try {
+          await cache.add(url);
+          console.log('[SW] Cached:', url);
+        } catch (e) {
+          console.warn('[SW] Failed to cache:', url, e);
         }
-        
-        console.log('[SW] All files cached');
-      })
+      }
+      
+      // Cache framework files (best effort)
+      for (const url of FRAMEWORK_FILES) {
+        try {
+          await cache.add(url);
+          console.log('[SW] Cached:', url);
+        } catch (e) {
+          console.warn('[SW] Failed to cache framework file:', url);
+        }
+      }
+      
+      // Cache CDNs (best effort)
+      for (const url of CDN_URLS) {
+        try {
+          const response = await fetch(url, { mode: 'cors' });
+          if (response.ok) {
+            await cache.put(url, response);
+            console.log('[SW] Cached CDN:', url);
+          }
+        } catch (e) {
+          console.warn('[SW] CDN not cached (will work when online):', url);
+        }
+      }
+      
+      console.log('[SW] Installation complete');
+    })
   );
-  
-  // Activate immediately
   self.skipWaiting();
 });
 
-// Activate event - clean up old caches and take control
 self.addEventListener('activate', (event) => {
   console.log('[SW] Activating...');
-  
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('[SW] Deleting old cache:', cacheName);
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    }).then(() => {
-      // Take control of all pages immediately
+    caches.keys().then(names => 
+      Promise.all(names.filter(n => n !== CACHE_NAME).map(n => {
+        console.log('[SW] Deleting old cache:', n);
+        return caches.delete(n);
+      }))
+    ).then(() => {
+      console.log('[SW] Now controlling all clients');
       return self.clients.claim();
     })
   );
 });
 
-// Fetch event - serve from cache first, then network
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   
   // Skip non-GET requests
-  if (event.request.method !== 'GET') {
+  if (event.request.method !== 'GET') return;
+  
+  // Network-only for external APIs
+  if (url.hostname === 'api.github.com' || 
+      url.hostname === 'openlibrary.org' || 
+      url.hostname === 'covers.openlibrary.org') {
+    event.respondWith(
+      fetch(event.request).catch(() => new Response('', { status: 503 }))
+    );
     return;
   }
   
-  // Skip GitHub API requests (they should always go to network)
-  if (url.hostname === 'api.github.com') {
-    return;
-  }
-  
+  // Cache-first strategy for everything else
   event.respondWith(
-    caches.match(event.request)
-      .then((cachedResponse) => {
-        if (cachedResponse) {
-          // Return cached version
-          return cachedResponse;
-        }
-        
-        // Not in cache, fetch from network
-        return fetch(event.request)
-          .then((networkResponse) => {
-            // Don't cache non-successful responses
-            if (!networkResponse || networkResponse.status !== 200) {
-              return networkResponse;
-            }
-            
-            // Cache the new response for future
-            const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME)
-              .then((cache) => {
-                cache.put(event.request, responseToCache);
-              });
-            
-            return networkResponse;
-          })
-          .catch((error) => {
-            console.log('[SW] Fetch failed, serving offline fallback');
-            // If both cache and network fail, return a basic offline response
-            return new Response('Offline - Please check your connection', {
-              status: 503,
-              statusText: 'Service Unavailable',
-              headers: { 'Content-Type': 'text/plain' }
-            });
+    caches.match(event.request).then(cached => {
+      if (cached) {
+        console.log('[SW] Serving from cache:', event.request.url);
+        return cached;
+      }
+      
+      console.log('[SW] Fetching:', event.request.url);
+      return fetch(event.request).then(response => {
+        // Cache successful responses
+        if (response.ok && response.type === 'basic') {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then(cache => {
+            cache.put(event.request, clone);
           });
-      })
+        }
+        return response;
+      }).catch(() => {
+        // Offline fallback for HTML pages
+        if (event.request.headers.get('accept')?.includes('text/html')) {
+          console.log('[SW] Offline - serving cached index.html');
+          return caches.match('./index.html');
+        }
+        return new Response('Offline', { status: 503, statusText: 'Offline' });
+      });
+    })
   );
 });
