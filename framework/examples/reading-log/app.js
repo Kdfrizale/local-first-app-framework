@@ -23,6 +23,7 @@ class ReadingLogApp extends App {
   async onInit() {
     this.setDefaultDate();
     this.setupEventHandlers();
+    this.setupISBNLookup();
   }
 
   onDataLoaded(data, source) {
@@ -97,6 +98,111 @@ class ReadingLogApp extends App {
       this.sortBy = e.target.value;
       this.render();
     });
+  }
+
+  // ============================================================
+  // ISBN LOOKUP
+  // ============================================================
+
+  setupISBNLookup() {
+    const btn = document.getElementById('isbn-lookup-btn');
+    const input = document.getElementById('isbn-input');
+    
+    btn.addEventListener('click', () => this.lookupISBN());
+    
+    // Allow Enter key to trigger lookup
+    input.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.lookupISBN();
+      }
+    });
+  }
+
+  async lookupISBN() {
+    const input = document.getElementById('isbn-input');
+    const btn = document.getElementById('isbn-lookup-btn');
+    const icon = document.getElementById('isbn-lookup-icon');
+    
+    // Clean ISBN (remove dashes and spaces)
+    const isbn = input.value.replace(/[-\s]/g, '').trim();
+    
+    if (!isbn) {
+      this._showToast('Please enter an ISBN', 'warning');
+      return;
+    }
+    
+    // Basic ISBN validation (10 or 13 digits)
+    if (!/^\d{10}(\d{3})?$/.test(isbn) && !/^\d{9}[Xx]$/.test(isbn)) {
+      this._showToast('Invalid ISBN format', 'error');
+      return;
+    }
+    
+    // Show loading state
+    btn.disabled = true;
+    icon.innerHTML = '<span class="animate-spin">⏳</span>';
+    
+    try {
+      // Use Open Library API (free, no key required)
+      const response = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch book data');
+      }
+      
+      const data = await response.json();
+      const bookData = data[`ISBN:${isbn}`];
+      
+      if (!bookData) {
+        this._showToast('Book not found. Try entering manually.', 'warning');
+        return;
+      }
+      
+      // Fill in the form fields
+      document.getElementById('title-input').value = bookData.title || '';
+      
+      // Get authors
+      const authors = bookData.authors?.map(a => a.name).join(', ') || '';
+      document.getElementById('author-input').value = authors;
+      
+      // Get cover image URL (prefer medium size)
+      const coverUrl = bookData.cover?.medium || bookData.cover?.large || bookData.cover?.small || '';
+      if (coverUrl) {
+        this.showCoverPreview(coverUrl);
+      } else {
+        this.clearCoverPreview();
+      }
+      
+      // Store ISBN for reference
+      document.getElementById('isbn-input').dataset.resolvedIsbn = isbn;
+      
+      this._showToast('Book found! Review and add.', 'success');
+      
+    } catch (error) {
+      console.error('[ISBN Lookup] Error:', error);
+      this._showToast('Lookup failed. Try again or enter manually.', 'error');
+    } finally {
+      btn.disabled = false;
+      icon.textContent = '🔍';
+    }
+  }
+
+  showCoverPreview(url) {
+    const preview = document.getElementById('cover-preview');
+    const img = document.getElementById('cover-image');
+    const hiddenInput = document.getElementById('cover-image-input');
+    
+    img.src = url;
+    hiddenInput.value = url;
+    preview.classList.remove('hidden');
+  }
+
+  clearCoverPreview() {
+    const preview = document.getElementById('cover-preview');
+    const hiddenInput = document.getElementById('cover-image-input');
+    
+    preview.classList.add('hidden');
+    hiddenInput.value = '';
   }
 
   // ============================================================
@@ -181,11 +287,14 @@ class ReadingLogApp extends App {
 
   addBook(form) {
     const formData = new FormData(form);
+    const isbnInput = document.getElementById('isbn-input');
     
     const book = {
       id: this.generateId(),
       title: formData.get('title').trim(),
       author: formData.get('author')?.trim() || '',
+      isbn: isbnInput.dataset.resolvedIsbn || isbnInput.value.replace(/[-\s]/g, '').trim() || '',
+      coverImage: formData.get('coverImage') || '', // Base64 cached cover
       readers: [...this.selectedReaders],
       dateRead: formData.get('dateRead') || new Date().toISOString().split('T')[0],
       rating: parseInt(formData.get('rating')) || 0,
@@ -199,6 +308,8 @@ class ReadingLogApp extends App {
     form.reset();
     this.selectedReaders = [];
     this.renderSelectedReaders();
+    this.clearCoverPreview();
+    delete isbnInput.dataset.resolvedIsbn;
     this.setDefaultDate();
     
     this.render();
@@ -220,14 +331,34 @@ class ReadingLogApp extends App {
       title: '✏️ Edit Book',
       content: `
         <form id="edit-book-form" class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Title *</label>
-            <input type="text" name="title" required value="${this.escapeHtml(book.title)}"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+          <div class="flex gap-4">
+            <div class="flex-shrink-0">
+              ${book.coverImage ? `
+                <img id="edit-cover-preview" src="${book.coverImage}" alt="Cover" class="w-16 h-24 object-cover rounded shadow">
+              ` : `
+                <div id="edit-cover-preview" class="w-16 h-24 bg-gray-200 rounded flex items-center justify-center text-gray-400 text-2xl">📚</div>
+              `}
+              <input type="hidden" name="coverImage" id="edit-cover-input" value="${book.coverImage || ''}">
+            </div>
+            <div class="flex-1 space-y-2">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Title *</label>
+                <input type="text" name="title" required value="${this.escapeHtml(book.title)}"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">ISBN</label>
+                <div class="flex gap-2">
+                  <input type="text" name="isbn" id="edit-isbn-input" value="${this.escapeHtml(book.isbn || '')}"
+                    class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="Optional">
+                  <button type="button" id="edit-isbn-lookup-btn" class="px-3 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm hover:bg-purple-200">🔍</button>
+                </div>
+              </div>
+            </div>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Author</label>
-            <input type="text" name="author" value="${this.escapeHtml(book.author || '')}"
+            <input type="text" name="author" id="edit-author-input" value="${this.escapeHtml(book.author || '')}"
               class="w-full px-3 py-2 border border-gray-300 rounded-lg">
           </div>
           <div>
@@ -278,6 +409,8 @@ class ReadingLogApp extends App {
                 ...this.books[idx],
                 title: formData.get('title').trim(),
                 author: formData.get('author')?.trim() || '',
+                isbn: formData.get('isbn')?.replace(/[-\s]/g, '').trim() || '',
+                coverImage: formData.get('coverImage') || '',
                 readers: selectedReaders,
                 dateRead: formData.get('dateRead') || '',
                 rating: parseInt(formData.get('rating')) || 0,
@@ -295,6 +428,82 @@ class ReadingLogApp extends App {
         }
       ]
     });
+    
+    // Setup ISBN lookup in edit modal
+    setTimeout(() => {
+      const btn = document.getElementById('edit-isbn-lookup-btn');
+      if (btn) {
+        btn.addEventListener('click', () => this.lookupISBNInEditModal());
+      }
+    }, 100);
+  }
+
+  async lookupISBNInEditModal() {
+    const input = document.getElementById('edit-isbn-input');
+    const btn = document.getElementById('edit-isbn-lookup-btn');
+    
+    const isbn = input.value.replace(/[-\s]/g, '').trim();
+    
+    if (!isbn) {
+      this._showToast('Please enter an ISBN', 'warning');
+      return;
+    }
+    
+    btn.disabled = true;
+    btn.textContent = '⏳';
+    
+    try {
+      const response = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
+      const data = await response.json();
+      const bookData = data[`ISBN:${isbn}`];
+      
+      if (!bookData) {
+        this._showToast('Book not found', 'warning');
+        return;
+      }
+      
+      // Update title if empty
+      const titleInput = document.querySelector('#edit-book-form input[name="title"]');
+      if (!titleInput.value && bookData.title) {
+        titleInput.value = bookData.title;
+      }
+      
+      // Update author if empty
+      const authorInput = document.getElementById('edit-author-input');
+      if (!authorInput.value && bookData.authors) {
+        authorInput.value = bookData.authors.map(a => a.name).join(', ');
+      }
+      
+      // Update cover URL
+      const coverUrl = bookData.cover?.medium || bookData.cover?.large || bookData.cover?.small || '';
+      if (coverUrl) {
+        const preview = document.getElementById('edit-cover-preview');
+        const hiddenInput = document.getElementById('edit-cover-input');
+        
+        // Replace placeholder div with img if needed
+        if (preview.tagName === 'DIV') {
+          const img = document.createElement('img');
+          img.id = 'edit-cover-preview';
+          img.src = coverUrl;
+          img.alt = 'Cover';
+          img.className = 'w-16 h-24 object-cover rounded shadow';
+          preview.replaceWith(img);
+        } else {
+          preview.src = coverUrl;
+        }
+        
+        hiddenInput.value = coverUrl;
+      }
+      
+      this._showToast('Book data updated!', 'success');
+      
+    } catch (error) {
+      console.error('[ISBN Lookup] Error:', error);
+      this._showToast('Lookup failed', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🔍';
+    }
   }
 
   deleteBook(id) {
@@ -367,26 +576,34 @@ class ReadingLogApp extends App {
     list.innerHTML = filteredBooks.map(book => `
       <div class="p-4 hover:bg-gray-50 transition">
         <div class="flex justify-between items-start">
-          <div class="flex-1">
-            <h3 class="font-semibold text-gray-900">${this.escapeHtml(book.title)}</h3>
-            ${book.author ? `<p class="text-sm text-gray-600">by ${this.escapeHtml(book.author)}</p>` : ''}
-            
-            <div class="flex flex-wrap items-center gap-3 mt-2 text-sm text-gray-500">
-              ${book.readers && book.readers.length ? `
-                <span class="flex items-center gap-1">
-                  👤 ${book.readers.map(r => this.escapeHtml(r)).join(', ')}
-                </span>
+          <div class="flex gap-4 flex-1">
+            ${book.coverImage ? `
+              <img src="${book.coverImage}" alt="Cover" class="w-12 h-18 object-cover rounded shadow flex-shrink-0">
+            ` : `
+              <div class="w-12 h-18 bg-gray-200 rounded flex items-center justify-center text-gray-400 flex-shrink-0 text-2xl">📚</div>
+            `}
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-gray-900">${this.escapeHtml(book.title)}</h3>
+              ${book.author ? `<p class="text-sm text-gray-600">by ${this.escapeHtml(book.author)}</p>` : ''}
+              
+              <div class="flex flex-wrap items-center gap-3 mt-2 text-sm text-gray-500">
+                ${book.readers && book.readers.length ? `
+                  <span class="flex items-center gap-1">
+                    👤 ${book.readers.map(r => this.escapeHtml(r)).join(', ')}
+                  </span>
+                ` : ''}
+                ${book.dateRead ? `<span>📅 ${book.dateRead}</span>` : ''}
+                ${book.rating ? `<span>${'⭐'.repeat(book.rating)}</span>` : ''}
+                ${book.isbn ? `<span class="text-xs text-gray-400">ISBN: ${book.isbn}</span>` : ''}
+              </div>
+              
+              ${book.notes ? `
+                <p class="mt-2 text-sm text-gray-600 italic">"${this.escapeHtml(book.notes)}"</p>
               ` : ''}
-              ${book.dateRead ? `<span>📅 ${book.dateRead}</span>` : ''}
-              ${book.rating ? `<span>${'⭐'.repeat(book.rating)}</span>` : ''}
             </div>
-            
-            ${book.notes ? `
-              <p class="mt-2 text-sm text-gray-600 italic">"${this.escapeHtml(book.notes)}"</p>
-            ` : ''}
           </div>
           
-          <div class="flex gap-1 ml-4">
+          <div class="flex gap-1 ml-4 flex-shrink-0">
             <button onclick="app.editBook('${book.id}')" 
               class="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded transition"
               title="Edit">✏️</button>
