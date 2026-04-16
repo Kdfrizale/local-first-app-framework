@@ -51,7 +51,7 @@ class GoalTrackerApp extends App {
 
   addGoal(form) {
     const formData = new FormData(form);
-    const today = new Date().toISOString().split('T')[0];
+    const today = this.getTodayDate();
     
     const goal = {
       id: this.generateId(),
@@ -190,7 +190,7 @@ class GoalTrackerApp extends App {
     const goal = this.goals.find(g => g.id === goalId);
     if (!goal) return;
     
-    const today = new Date().toISOString().split('T')[0];
+    const today = this.getTodayDate();
     
     modal.show({
       title: `📊 Update ${goal.lagMeasure?.name || 'Progress'}`,
@@ -454,7 +454,7 @@ class GoalTrackerApp extends App {
     const idx = this.goals.findIndex(g => g.id === goalId);
     if (idx === -1) return;
     
-    const today = new Date().toISOString().split('T')[0];
+    const today = this.getTodayDate();
     
     this.goals[idx].leadMeasures = this.goals[idx].leadMeasures || [];
     this.goals[idx].leadMeasures.push({
@@ -482,7 +482,7 @@ class GoalTrackerApp extends App {
     const lead = goal.leadMeasures?.find(l => l.id === leadId);
     if (!lead) return;
     
-    const today = new Date().toISOString().split('T')[0];
+    const today = this.getTodayDate();
     const frequencyLabel = lead.frequency === 'daily' ? 'today' : 
                           lead.frequency === 'weekly' ? 'this week' : 'this month';
     
@@ -768,14 +768,19 @@ class GoalTrackerApp extends App {
     } else if (frequency === 'weekly') {
       const day = d.getDay();
       d.setDate(d.getDate() - day);
-      return d.toISOString().split('T')[0];
+      return this.dateToLocalString(d);
     } else { // monthly
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     }
   }
 
   getCurrentPeriodKey(frequency) {
-    return this.getPeriodKey(new Date().toISOString().split('T')[0], frequency);
+    return this.getPeriodKey(this.getTodayDate(), frequency);
+  }
+
+  dateToLocalString(date) {
+    // Convert a Date object to YYYY-MM-DD in local timezone
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   }
 
   // ============================================================
@@ -1146,6 +1151,11 @@ class GoalTrackerApp extends App {
   // ============================================================
   // UTILITIES
   // ============================================================
+
+  getTodayDate() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
 
   generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);

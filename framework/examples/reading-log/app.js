@@ -60,7 +60,7 @@ class ReadingLogApp extends App {
   setDefaultDate() {
     const dateInput = document.getElementById('date-read-input');
     if (dateInput) {
-      dateInput.value = new Date().toISOString().split('T')[0];
+      dateInput.value = this.getTodayDate();
     }
   }
 
@@ -296,7 +296,7 @@ class ReadingLogApp extends App {
       isbn: isbnInput.dataset.resolvedIsbn || isbnInput.value.replace(/[-\s]/g, '').trim() || '',
       coverImage: formData.get('coverImage') || '', // Base64 cached cover
       readers: [...this.selectedReaders],
-      dateRead: formData.get('dateRead') || new Date().toISOString().split('T')[0],
+      dateRead: formData.get('dateRead') || this.getTodayDate(),
       rating: parseInt(formData.get('rating')) || 0,
       notes: formData.get('notes')?.trim() || '',
       createdAt: new Date().toISOString()
@@ -642,6 +642,11 @@ class ReadingLogApp extends App {
   // ============================================================
   // UTILITIES
   // ============================================================
+
+  getTodayDate() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
 
   generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);

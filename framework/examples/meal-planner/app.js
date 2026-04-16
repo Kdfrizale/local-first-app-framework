@@ -68,7 +68,7 @@ class MealPlannerApp extends App {
     const d = new Date(date);
     const day = d.getDay();
     d.setDate(d.getDate() - day);
-    return d.toISOString().split('T')[0];
+    return this.dateToLocalString(d);
   }
 
   getWeekDates() {
@@ -77,7 +77,7 @@ class MealPlannerApp extends App {
     for (let i = 0; i < 7; i++) {
       const d = new Date(start);
       d.setDate(start.getDate() + i);
-      dates.push(d.toISOString().split('T')[0]);
+      dates.push(this.dateToLocalString(d));
     }
     return dates;
   }
@@ -85,7 +85,7 @@ class MealPlannerApp extends App {
   changeWeek(delta) {
     const current = new Date(this.currentWeekStart);
     current.setDate(current.getDate() + (delta * 7));
-    this.currentWeekStart = current.toISOString().split('T')[0];
+    this.currentWeekStart = this.dateToLocalString(current);
     this.render();
   }
 
@@ -375,7 +375,7 @@ class MealPlannerApp extends App {
 
   renderWeekHeader() {
     const dates = this.getWeekDates();
-    const today = new Date().toISOString().split('T')[0];
+    const today = this.getTodayDate();
     
     // Update week display
     document.getElementById('week-display').textContent = 
@@ -395,7 +395,7 @@ class MealPlannerApp extends App {
   renderMealGrid() {
     const container = document.getElementById('meal-grid');
     const dates = this.getWeekDates();
-    const today = new Date().toISOString().split('T')[0];
+    const today = this.getTodayDate();
     
     container.innerHTML = this.mealTypes.map(mealType => `
       <tr>
@@ -485,6 +485,16 @@ class MealPlannerApp extends App {
   // ============================================================
   // UTILITIES
   // ============================================================
+
+  getTodayDate() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  dateToLocalString(date) {
+    // Convert a Date object to YYYY-MM-DD in local timezone
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
 
   generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
