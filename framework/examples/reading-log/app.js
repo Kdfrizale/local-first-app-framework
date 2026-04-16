@@ -72,7 +72,10 @@ class ReadingLogApp extends App {
     // Add book form
     document.getElementById('add-book-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      this.addBook(e.target);
+      const success = this.addBook(e.target);
+      if (success) {
+        this._showToast('Book added!', 'success');
+      }
     });
     
     // Reader multi-select
@@ -108,18 +111,19 @@ class ReadingLogApp extends App {
     const btn = document.getElementById('isbn-lookup-btn');
     const input = document.getElementById('isbn-input');
     
-    btn.addEventListener('click', () => this.lookupISBN());
+    // Button click: lookup but don't auto-submit (manual mode)
+    btn.addEventListener('click', () => this.lookupISBN(false));
     
-    // Allow Enter key to trigger lookup
+    // Enter key: lookup AND auto-submit (scan mode)
     input.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        this.lookupISBN();
+        this.lookupISBN(true);
       }
     });
   }
 
-  async lookupISBN() {
+  async lookupISBN(autoSubmit = true) {
     const input = document.getElementById('isbn-input');
     const btn = document.getElementById('isbn-lookup-btn');
     const icon = document.getElementById('isbn-lookup-icon');
@@ -155,6 +159,8 @@ class ReadingLogApp extends App {
       
       if (!bookData) {
         this._showToast('Book not found. Try entering manually.', 'warning');
+        btn.disabled = false;
+        icon.textContent = '🔍';
         return;
       }
       
@@ -176,7 +182,25 @@ class ReadingLogApp extends App {
       // Store ISBN for reference
       document.getElementById('isbn-input').dataset.resolvedIsbn = isbn;
       
-      this._showToast('Book found! Review and add.', 'success');
+      // Auto-submit if enabled (when triggered by Enter key)
+      if (autoSubmit) {
+        // Small delay to ensure form fields are populated
+        setTimeout(() => {
+          const form = document.getElementById('add-book-form');
+          const success = this.addBook(form);
+          
+          if (success) {
+            this._showToast('Book added!', 'success');
+            
+            // Reset focus to ISBN input for next scan
+            setTimeout(() => {
+              input.focus();
+            }, 50);
+          }
+        }, 50);
+      } else {
+        this._showToast('Book found! Review and add.', 'success');
+      }
       
     } catch (error) {
       console.error('[ISBN Lookup] Error:', error);
@@ -288,10 +312,19 @@ class ReadingLogApp extends App {
   addBook(form) {
     const formData = new FormData(form);
     const isbnInput = document.getElementById('isbn-input');
+    const titleInput = document.getElementById('title-input');
+    
+    // Validate required fields
+    const title = formData.get('title')?.trim();
+    if (!title) {
+      this._showToast('Title is required', 'warning');
+      titleInput.focus();
+      return;
+    }
     
     const book = {
       id: this.generateId(),
-      title: formData.get('title').trim(),
+      title: title,
       author: formData.get('author')?.trim() || '',
       isbn: isbnInput.dataset.resolvedIsbn || isbnInput.value.replace(/[-\s]/g, '').trim() || '',
       coverImage: formData.get('coverImage') || '', // Base64 cached cover
@@ -311,12 +344,13 @@ class ReadingLogApp extends App {
     this.clearCoverPreview();
     delete isbnInput.dataset.resolvedIsbn;
     this.setDefaultDate();
+    this.updateReaderSelect();
     
     this.render();
     this.updateStats();
     this.saveData();
     
-    this._showToast('Book added!', 'success');
+    return true; // Success
   }
 
   editBook(id) {

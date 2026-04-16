@@ -15,6 +15,8 @@ class BookshelfApp extends App {
     // Filters
     this.searchQuery = '';
     this.sortBy = 'added-desc';
+    this.filterRead = 'all'; // all, read, unread
+    this.filterGenre = ''; // empty = all
   }
 
   async onInit() {
@@ -27,6 +29,7 @@ class BookshelfApp extends App {
     this.books = data.books || [];
     this.render();
     this.updateStats();
+    this.updateGenreFilter();
   }
 
   getData() {
@@ -61,6 +64,18 @@ class BookshelfApp extends App {
       this.sortBy = e.target.value;
       this.render();
     });
+    
+    // Filter by read status
+    document.getElementById('filter-read').addEventListener('change', (e) => {
+      this.filterRead = e.target.value;
+      this.render();
+    });
+    
+    // Filter by genre
+    document.getElementById('filter-genre').addEventListener('change', (e) => {
+      this.filterGenre = e.target.value;
+      this.render();
+    });
   }
 
   // ============================================================
@@ -71,18 +86,19 @@ class BookshelfApp extends App {
     const btn = document.getElementById('isbn-lookup-btn');
     const input = document.getElementById('isbn-input');
     
-    btn.addEventListener('click', () => this.lookupISBN());
+    // Button click: lookup but don't auto-submit (manual mode)
+    btn.addEventListener('click', () => this.lookupISBN(false));
     
-    // Allow Enter key to trigger lookup
+    // Enter key: lookup AND auto-submit (scan mode)
     input.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        this.lookupISBN();
+        this.lookupISBN(true);
       }
     });
   }
 
-  async lookupISBN() {
+  async lookupISBN(autoSubmit = true) {
     const input = document.getElementById('isbn-input');
     const btn = document.getElementById('isbn-lookup-btn');
     const icon = document.getElementById('isbn-lookup-icon');
@@ -118,6 +134,8 @@ class BookshelfApp extends App {
       
       if (!bookData) {
         this._showToast('Book not found. Try entering manually.', 'warning');
+        btn.disabled = false;
+        icon.textContent = '🔍';
         return;
       }
       
@@ -127,6 +145,10 @@ class BookshelfApp extends App {
       // Get authors
       const authors = bookData.authors?.map(a => a.name).join(', ') || '';
       document.getElementById('author-input').value = authors;
+      
+      // Get genre/subjects (use smart selection from subjects array)
+      const genre = this.selectBestGenre(bookData.subjects);
+      document.getElementById('genre-input').value = genre;
       
       // Get cover image URL (prefer medium size)
       const coverUrl = bookData.cover?.medium || bookData.cover?.large || bookData.cover?.small || '';
@@ -139,7 +161,21 @@ class BookshelfApp extends App {
       // Store ISBN for reference
       document.getElementById('isbn-input').dataset.resolvedIsbn = isbn;
       
-      this._showToast('Book found! Review and add.', 'success');
+      // Auto-submit if enabled (when triggered by Enter key)
+      if (autoSubmit) {
+        // Small delay to ensure form fields are populated
+        setTimeout(() => {
+          const form = document.getElementById('add-book-form');
+          this.addBook(form);
+          
+          // Reset focus to ISBN input for next scan
+          setTimeout(() => {
+            input.focus();
+          }, 50);
+        }, 50);
+      } else {
+        this._showToast('Book found! Review and add.', 'success');
+      }
       
     } catch (error) {
       console.error('[ISBN Lookup] Error:', error);
@@ -181,6 +217,8 @@ class BookshelfApp extends App {
       title: formData.get('title').trim(),
       author: formData.get('author')?.trim() || '',
       isbn: isbnInput.dataset.resolvedIsbn || isbnInput.value.replace(/[-\s]/g, '').trim() || '',
+      genre: formData.get('genre')?.trim() || '',
+      isRead: formData.get('isRead') === 'on',
       coverImage: formData.get('coverImage') || '',
       notes: formData.get('notes')?.trim() || '',
       createdAt: new Date().toISOString()
@@ -195,6 +233,7 @@ class BookshelfApp extends App {
     
     this.render();
     this.updateStats();
+    this.updateGenreFilter();
     this.saveData();
     
     this._showToast('Book added!', 'success');
@@ -239,6 +278,18 @@ class BookshelfApp extends App {
               class="w-full px-3 py-2 border border-gray-300 rounded-lg">
           </div>
           <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Genre</label>
+            <input type="text" name="genre" id="edit-genre-input" value="${this.escapeHtml(book.genre || '')}"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="e.g., Fiction, Science, History">
+          </div>
+          <div>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" name="isRead" ${book.isRead ? 'checked' : ''}
+                class="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500">
+              <span class="text-sm font-medium text-gray-700">Mark as read</span>
+            </label>
+          </div>
+          <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Notes</label>
             <textarea name="notes" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-lg">${this.escapeHtml(book.notes || '')}</textarea>
           </div>
@@ -265,12 +316,16 @@ class BookshelfApp extends App {
                 title: formData.get('title').trim(),
                 author: formData.get('author')?.trim() || '',
                 isbn: formData.get('isbn')?.replace(/[-\s]/g, '').trim() || '',
+                genre: formData.get('genre')?.trim() || '',
+                isRead: formData.get('isRead') === 'on',
                 coverImage: formData.get('coverImage') || '',
                 notes: formData.get('notes')?.trim() || '',
                 updatedAt: new Date().toISOString()
               };
               
               this.render();
+              this.updateStats();
+              this.updateGenreFilter();
               this.saveData();
               this._showToast('Book updated!', 'success');
             }
@@ -336,6 +391,12 @@ class BookshelfApp extends App {
         authorInput.value = bookData.authors.map(a => a.name).join(', ');
       }
       
+      // Update genre if available (use smart selection)
+      const genreInput = document.getElementById('edit-genre-input');
+      if (genreInput && !genreInput.value && bookData.subjects) {
+        genreInput.value = this.selectBestGenre(bookData.subjects);
+      }
+      
       // Update cover URL
       const coverUrl = bookData.cover?.medium || bookData.cover?.large || bookData.cover?.small || '';
       if (coverUrl) {
@@ -396,8 +457,25 @@ class BookshelfApp extends App {
       filteredBooks = filteredBooks.filter(book => 
         book.title.toLowerCase().includes(this.searchQuery) ||
         (book.author || '').toLowerCase().includes(this.searchQuery) ||
+        (book.genre || '').toLowerCase().includes(this.searchQuery) ||
         (book.notes || '').toLowerCase().includes(this.searchQuery) ||
         (book.isbn || '').includes(this.searchQuery)
+      );
+    }
+    
+    // Apply read status filter
+    if (this.filterRead !== 'all') {
+      filteredBooks = filteredBooks.filter(book => {
+        if (this.filterRead === 'read') return book.isRead;
+        if (this.filterRead === 'unread') return !book.isRead;
+        return true;
+      });
+    }
+    
+    // Apply genre filter
+    if (this.filterGenre) {
+      filteredBooks = filteredBooks.filter(book => 
+        (book.genre || '').toLowerCase() === this.filterGenre.toLowerCase()
       );
     }
     
@@ -416,6 +494,10 @@ class BookshelfApp extends App {
           return (a.author || '').localeCompare(b.author || '');
         case 'author-desc':
           return (b.author || '').localeCompare(a.author || '');
+        case 'genre-asc':
+          return (a.genre || '').localeCompare(b.genre || '');
+        case 'genre-desc':
+          return (b.genre || '').localeCompare(a.genre || '');
         default:
           return 0;
       }
@@ -423,13 +505,13 @@ class BookshelfApp extends App {
     
     if (filteredBooks.length === 0) {
       list.innerHTML = `<div class="p-8 text-center text-gray-400">
-        ${this.searchQuery ? 'No books match your search.' : 'No books yet. Add your first book above!'}
+        ${this.searchQuery || this.filterRead !== 'all' || this.filterGenre ? 'No books match your filters.' : 'No books yet. Add your first book above!'}
       </div>`;
       return;
     }
     
     list.innerHTML = filteredBooks.map(book => `
-      <div class="p-4 hover:bg-gray-50 transition">
+      <div class="p-4 hover:bg-gray-50 transition border-b border-gray-100 last:border-0">
         <div class="flex justify-between items-start">
           <div class="flex gap-4 flex-1">
             ${book.coverImage ? `
@@ -438,10 +520,14 @@ class BookshelfApp extends App {
               <div class="w-12 h-18 bg-gray-200 rounded flex items-center justify-center text-gray-400 flex-shrink-0 text-2xl">📚</div>
             `}
             <div class="flex-1 min-w-0">
-              <h3 class="font-semibold text-gray-900">${this.escapeHtml(book.title)}</h3>
+              <div class="flex items-start gap-2">
+                <h3 class="font-semibold text-gray-900 flex-1">${this.escapeHtml(book.title)}</h3>
+                ${book.isRead ? '<span class="text-green-600 text-sm">✓ Read</span>' : '<span class="text-gray-400 text-sm">○ Unread</span>'}
+              </div>
               ${book.author ? `<p class="text-sm text-gray-600">by ${this.escapeHtml(book.author)}</p>` : ''}
               
               <div class="flex flex-wrap items-center gap-3 mt-2 text-sm text-gray-500">
+                ${book.genre ? `<span class="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">${this.escapeHtml(book.genre)}</span>` : ''}
                 ${book.isbn ? `<span class="text-xs text-gray-400">ISBN: ${book.isbn}</span>` : ''}
               </div>
               
@@ -452,6 +538,9 @@ class BookshelfApp extends App {
           </div>
           
           <div class="flex gap-1 ml-4 flex-shrink-0">
+            <button onclick="app.toggleRead('${book.id}')" 
+              class="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition"
+              title="${book.isRead ? 'Mark as unread' : 'Mark as read'}">${book.isRead ? '✓' : '○'}</button>
             <button onclick="app.editBook('${book.id}')" 
               class="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded transition"
               title="Edit">✏️</button>
@@ -465,12 +554,110 @@ class BookshelfApp extends App {
   }
 
   updateStats() {
+    const readCount = this.books.filter(b => b.isRead).length;
     document.getElementById('stat-total').textContent = this.books.length;
+    document.getElementById('stat-read').textContent = readCount;
+    document.getElementById('stat-unread').textContent = this.books.length - readCount;
+  }
+
+  updateGenreFilter() {
+    const select = document.getElementById('filter-genre');
+    const genres = new Set();
+    
+    this.books.forEach(book => {
+      if (book.genre) genres.add(book.genre);
+    });
+    
+    const sortedGenres = Array.from(genres).sort();
+    
+    select.innerHTML = '<option value="">All Genres</option>' + 
+      sortedGenres.map(g => `<option value="${this.escapeHtml(g)}">${this.escapeHtml(g)}</option>`).join('');
+  }
+
+  toggleRead(id) {
+    const book = this.books.find(b => b.id === id);
+    if (!book) return;
+    
+    book.isRead = !book.isRead;
+    this.render();
+    this.updateStats();
+    this.saveData();
+    
+    this._showToast(book.isRead ? 'Marked as read!' : 'Marked as unread', 'success');
   }
 
   // ============================================================
   // UTILITIES
   // ============================================================
+
+  normalizeGenre(genreName) {
+    if (!genreName) return '';
+    
+    // Replace underscores and dashes with spaces
+    let normalized = genreName.replace(/[_-]/g, ' ');
+    
+    // Remove extra spaces
+    normalized = normalized.replace(/\s+/g, ' ').trim();
+    
+    // Convert to Title Case (capitalize first letter of each word)
+    normalized = normalized
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+    
+    return normalized;
+  }
+
+  selectBestGenre(subjects) {
+    // Common book genres to prioritize
+    const commonGenres = [
+      'Fiction', 'Nonfiction', 'Science Fiction', 'Fantasy', 'Mystery', 
+      'Thriller', 'Romance', 'Historical Fiction', 'Biography', 'Autobiography',
+      'History', 'Science', 'Self-Help', 'Business', 'Philosophy',
+      'Psychology', 'Poetry', 'Drama', 'Horror', 'Adventure',
+      'Young Adult', 'Children', 'Graphic Novel', 'Comedy', 'Humor',
+      'Crime', 'Detective', 'Literary Fiction', 'Contemporary Fiction',
+      'Classic Literature', 'Religion', 'Spirituality', 'Travel',
+      'Cookbook', 'Art', 'Music', 'Sports', 'True Crime',
+      'Memoir', 'Essay', 'Short Stories', 'Education', 'Politics'
+    ];
+    
+    if (!subjects || !Array.isArray(subjects)) return '';
+    
+    // First pass: Look for exact matches with common genres
+    for (const genre of commonGenres) {
+      const found = subjects.find(s => {
+        if (!s.name) return false;
+        const normalized = this.normalizeGenre(s.name);
+        return normalized.toLowerCase() === genre.toLowerCase();
+      });
+      if (found) return this.normalizeGenre(found.name);
+    }
+    
+    // Second pass: Look for partial matches
+    for (const genre of commonGenres) {
+      const found = subjects.find(s => {
+        if (!s.name) return false;
+        const normalized = this.normalizeGenre(s.name);
+        return normalized.toLowerCase().includes(genre.toLowerCase());
+      });
+      if (found) return this.normalizeGenre(found.name);
+    }
+    
+    // Third pass: Skip translation/technical subjects, get first reasonable subject
+    const skipPatterns = ['translation', 'language', 'open library', 'staff picks', 'philology'];
+    for (const subject of subjects) {
+      const name = subject.name || '';
+      const normalized = this.normalizeGenre(name);
+      const isSkippable = skipPatterns.some(pattern => 
+        normalized.toLowerCase().includes(pattern)
+      );
+      if (!isSkippable && normalized) return normalized;
+    }
+    
+    // Fallback: Return first subject if available, normalized
+    return this.normalizeGenre(subjects[0]?.name || '');
+  }
 
   generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
