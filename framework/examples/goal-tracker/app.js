@@ -289,6 +289,92 @@ class GoalTrackerApp extends App {
     this._showToast('Value recorded!', 'success');
   }
 
+  showLagMeasureHistory(goalId) {
+    const goal = this.goals.find(g => g.id === goalId);
+    if (!goal) return;
+
+    const history = goal.lagMeasure?.history || [];
+    const sortedHistory = [...history].sort((a, b) => b.date.localeCompare(a.date));
+
+    modal.show({
+      title: `📊 ${goal.lagMeasure?.name || 'Progress'} - History`,
+      content: `
+        <div class="space-y-4">
+          <div class="p-3 bg-violet-50 rounded-lg">
+            <div class="text-sm text-gray-600">
+              <strong>Start:</strong> ${goal.lagMeasure?.start || 0}
+              <br>
+              <strong>Target:</strong> ${goal.lagMeasure?.target || 100}
+              <br>
+              <strong>Current:</strong> ${goal.lagMeasure?.current || 0}
+            </div>
+          </div>
+          
+          ${sortedHistory.length === 0 ? `
+            <div class="text-center py-8 text-gray-400">
+              No history yet. Record your first value!
+            </div>
+          ` : `
+            <div class="max-h-96 overflow-y-auto space-y-2">
+              ${sortedHistory.map(entry => {
+                return `
+                  <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                    <div class="flex-1">
+                      <div class="font-medium text-violet-700">
+                        ${entry.value}
+                      </div>
+                      <div class="text-sm text-gray-500">${new Date(entry.date).toLocaleDateString()}</div>
+                      ${entry.note ? `<div class="text-xs text-gray-500 italic mt-1">${this.escapeHtml(entry.note)}</div>` : ''}
+                    </div>
+                    <button onclick="app.deleteLagMeasureEntry('${goalId}', '${entry.date}')"
+                      class="text-gray-400 hover:text-red-600 transition" title="Delete">
+                      🗑️
+                    </button>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          `}
+          
+          <div class="pt-3 border-t border-gray-200">
+            <button onclick="modal.close(); app.showUpdateLagMeasure('${goalId}')"
+              class="w-full px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition">
+              + Record New Value
+            </button>
+          </div>
+        </div>
+      `,
+      buttons: [
+        { text: 'Close', onClick: () => modal.close() }
+      ]
+    });
+  }
+
+  deleteLagMeasureEntry(goalId, date) {
+    const goalIdx = this.goals.findIndex(g => g.id === goalId);
+    if (goalIdx === -1) return;
+    
+    const goal = this.goals[goalIdx];
+    goal.lagMeasure.history = goal.lagMeasure.history.filter(h => h.date !== date);
+    
+    // Update current value to most recent entry
+    if (goal.lagMeasure.history.length > 0) {
+      const sortedHistory = [...goal.lagMeasure.history].sort((a, b) => b.date.localeCompare(a.date));
+      goal.lagMeasure.current = sortedHistory[0].value;
+    } else {
+      goal.lagMeasure.current = goal.lagMeasure.start;
+    }
+    
+    this.goals[goalIdx].updatedAt = new Date().toISOString();
+    this.render();
+    this.saveData();
+    
+    this._showToast('Entry deleted', 'info');
+    
+    // Re-show the history modal
+    setTimeout(() => this.showLagMeasureHistory(goalId), 100);
+  }
+
   // ============================================================
   // LEAD MEASURES
   // ============================================================
@@ -323,6 +409,14 @@ class GoalTrackerApp extends App {
               </select>
             </div>
           </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Goal Type</label>
+            <select name="goalType" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+              <option value="reach">Reach or exceed target</option>
+              <option value="stayUnder">Stay under target limit</option>
+            </select>
+            <p class="text-xs text-gray-500 mt-1">Choose "Stay under" for things you want to minimize (e.g., incidents, calories)</p>
+          </div>
           <p class="text-xs text-gray-500">You'll track this value over time and it will appear on the progress chart.</p>
         </form>
       `,
@@ -345,7 +439,8 @@ class GoalTrackerApp extends App {
               name,
               unit: formData.get('unit')?.trim() || '',
               target: parseFloat(formData.get('target')) || 100,
-              frequency: formData.get('frequency') || 'daily'
+              frequency: formData.get('frequency') || 'daily',
+              goalType: formData.get('goalType') || 'reach'
             });
             
             modal.close();
@@ -368,6 +463,7 @@ class GoalTrackerApp extends App {
       unit: data.unit,
       target: data.target,
       frequency: data.frequency,
+      goalType: data.goalType || 'reach',
       current: 0,
       history: [] // Will store {date, value} entries
     });
@@ -485,6 +581,186 @@ class GoalTrackerApp extends App {
     this._showToast('Lead measure removed', 'info');
   }
 
+  editLeadMeasure(goalId, leadId) {
+    const goal = this.goals.find(g => g.id === goalId);
+    if (!goal) return;
+    
+    const lead = goal.leadMeasures?.find(l => l.id === leadId);
+    if (!lead) return;
+
+    modal.show({
+      title: '✏️ Edit Lead Measure',
+      content: `
+        <form id="edit-lead-form" class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Activity Name *</label>
+            <input type="text" name="name" required value="${this.escapeHtml(lead.name)}"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Unit (optional)</label>
+            <input type="text" name="unit" value="${this.escapeHtml(lead.unit || '')}"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Target Value</label>
+              <input type="number" name="target" step="any" value="${lead.target}"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Frequency</label>
+              <select name="frequency" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                <option value="daily" ${lead.frequency === 'daily' ? 'selected' : ''}>Daily</option>
+                <option value="weekly" ${lead.frequency === 'weekly' ? 'selected' : ''}>Weekly</option>
+                <option value="monthly" ${lead.frequency === 'monthly' ? 'selected' : ''}>Monthly</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Goal Type</label>
+            <select name="goalType" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+              <option value="reach" ${(lead.goalType || 'reach') === 'reach' ? 'selected' : ''}>Reach or exceed target</option>
+              <option value="stayUnder" ${lead.goalType === 'stayUnder' ? 'selected' : ''}>Stay under target limit</option>
+            </select>
+            <p class="text-xs text-gray-500 mt-1">Choose "Stay under" for things you want to minimize</p>
+          </div>
+        </form>
+      `,
+      buttons: [
+        { text: 'Cancel', onClick: () => modal.close() },
+        {
+          text: 'Save Changes',
+          primary: true,
+          onClick: () => {
+            const form = document.getElementById('edit-lead-form');
+            if (!form.checkValidity()) {
+              form.reportValidity();
+              return;
+            }
+            
+            const formData = new FormData(form);
+            const goalIdx = this.goals.findIndex(g => g.id === goalId);
+            const leadIdx = this.goals[goalIdx].leadMeasures.findIndex(l => l.id === leadId);
+            
+            if (goalIdx !== -1 && leadIdx !== -1) {
+              this.goals[goalIdx].leadMeasures[leadIdx] = {
+                ...this.goals[goalIdx].leadMeasures[leadIdx],
+                name: formData.get('name').trim(),
+                unit: formData.get('unit')?.trim() || '',
+                target: parseFloat(formData.get('target')),
+                frequency: formData.get('frequency'),
+                goalType: formData.get('goalType') || 'reach'
+              };
+              
+              this.goals[goalIdx].updatedAt = new Date().toISOString();
+              this.render();
+              this.saveData();
+              this._showToast('Lead measure updated!', 'success');
+            }
+            
+            modal.close();
+          }
+        }
+      ]
+    });
+  }
+
+  showLeadMeasureHistory(goalId, leadId) {
+    const goal = this.goals.find(g => g.id === goalId);
+    if (!goal) return;
+    
+    const lead = goal.leadMeasures?.find(l => l.id === leadId);
+    if (!lead) return;
+
+    const history = lead.history || [];
+    const sortedHistory = [...history].sort((a, b) => b.date.localeCompare(a.date));
+
+    modal.show({
+      title: `📊 ${lead.name} - History`,
+      content: `
+        <div class="space-y-4">
+          <div class="p-3 bg-blue-50 rounded-lg">
+            <div class="text-sm text-gray-600">
+              <strong>Target:</strong> ${lead.target} ${lead.unit || ''} (${lead.frequency})
+              <br>
+              <strong>Goal Type:</strong> ${lead.goalType === 'stayUnder' ? 'Stay under limit' : 'Reach or exceed'}
+            </div>
+          </div>
+          
+          ${sortedHistory.length === 0 ? `
+            <div class="text-center py-8 text-gray-400">
+              No history yet. Record your first value!
+            </div>
+          ` : `
+            <div class="max-h-96 overflow-y-auto space-y-2">
+              ${sortedHistory.map(entry => {
+                const isOnTarget = lead.goalType === 'stayUnder' 
+                  ? entry.value <= lead.target 
+                  : entry.value >= lead.target;
+                const statusColor = isOnTarget ? 'text-green-600' : 'text-amber-600';
+                const statusIcon = isOnTarget ? '✓' : '○';
+                
+                return `
+                  <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                    <div>
+                      <div class="font-medium ${statusColor}">
+                        ${statusIcon} ${entry.value} ${lead.unit || ''}
+                      </div>
+                      <div class="text-sm text-gray-500">${new Date(entry.date).toLocaleDateString()}</div>
+                    </div>
+                    <button onclick="app.deleteLeadMeasureEntry('${goalId}', '${leadId}', '${entry.date}')"
+                      class="text-gray-400 hover:text-red-600 transition" title="Delete">
+                      🗑️
+                    </button>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          `}
+          
+          <div class="pt-3 border-t border-gray-200">
+            <button onclick="modal.close(); app.showUpdateLeadMeasure('${goalId}', '${leadId}')"
+              class="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+              + Record New Value
+            </button>
+          </div>
+        </div>
+      `,
+      buttons: [
+        { text: 'Close', onClick: () => modal.close() }
+      ]
+    });
+  }
+
+  deleteLeadMeasureEntry(goalId, leadId, date) {
+    const goalIdx = this.goals.findIndex(g => g.id === goalId);
+    if (goalIdx === -1) return;
+    
+    const leadIdx = this.goals[goalIdx].leadMeasures?.findIndex(l => l.id === leadId);
+    if (leadIdx === -1) return;
+    
+    const lead = this.goals[goalIdx].leadMeasures[leadIdx];
+    lead.history = lead.history.filter(h => h.date !== date);
+    
+    // Update current value to most recent entry
+    if (lead.history.length > 0) {
+      const sortedHistory = [...lead.history].sort((a, b) => b.date.localeCompare(a.date));
+      lead.current = sortedHistory[0].value;
+    } else {
+      lead.current = 0;
+    }
+    
+    this.goals[goalIdx].updatedAt = new Date().toISOString();
+    this.render();
+    this.saveData();
+    
+    this._showToast('Entry deleted', 'info');
+    
+    // Re-show the history modal
+    setTimeout(() => this.showLeadMeasureHistory(goalId, leadId), 100);
+  }
+
   getPeriodKey(date, frequency) {
     const d = new Date(date + 'T00:00:00');
     if (frequency === 'daily') {
@@ -562,10 +838,18 @@ class GoalTrackerApp extends App {
           <div class="p-4 bg-violet-50 rounded-lg">
             <div class="flex justify-between items-center mb-3">
               <h4 class="font-semibold text-violet-800">📊 Lag: ${this.escapeHtml(goal.lagMeasure?.name || 'Outcome')}</h4>
-              <button onclick="app.showUpdateLagMeasure('${goal.id}')"
-                class="px-3 py-1 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 transition">
-                Update
-              </button>
+              <div class="flex gap-2">
+                ${(goal.lagMeasure?.history?.length > 0) ? `
+                  <button onclick="app.showLagMeasureHistory('${goal.id}')"
+                    class="px-3 py-1 bg-violet-100 text-violet-700 rounded-lg text-sm hover:bg-violet-200 transition">
+                    History
+                  </button>
+                ` : ''}
+                <button onclick="app.showUpdateLagMeasure('${goal.id}')"
+                  class="px-3 py-1 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 transition">
+                  Update
+                </button>
+              </div>
             </div>
             
             <div class="flex justify-between text-sm mb-2">
@@ -617,34 +901,71 @@ class GoalTrackerApp extends App {
   renderLeadMeasure(goalId, lead) {
     const frequencyLabel = lead.frequency === 'daily' ? 'today' : 
                           lead.frequency === 'weekly' ? 'this week' : 'this month';
-    const progress = Math.min(100, ((lead.current || 0) / lead.target) * 100);
-    const progressColor = progress >= 100 ? 'bg-green-500' : 'bg-blue-500';
+    
+    // Calculate progress differently based on goal type
+    let progress, progressColor, statusText;
+    if (lead.goalType === 'stayUnder') {
+      // For "stay under" goals, success is being at or below target
+      if ((lead.current || 0) <= lead.target) {
+        progress = 100;
+        progressColor = 'bg-green-500';
+        statusText = 'text-green-600';
+      } else {
+        progress = ((lead.current || 0) / lead.target) * 100;
+        progressColor = 'bg-red-500';
+        statusText = 'text-red-600';
+      }
+    } else {
+      // For "reach" goals, success is meeting or exceeding target
+      progress = Math.min(100, ((lead.current || 0) / lead.target) * 100);
+      progressColor = progress >= 100 ? 'bg-green-500' : 'bg-blue-500';
+      statusText = progress >= 100 ? 'text-green-600' : 'text-gray-600';
+    }
     
     return `
-      <div class="p-3 bg-gray-50 rounded-lg">
-        <div class="flex justify-between items-center mb-2">
-          <div>
-            <span class="font-medium text-gray-700">${this.escapeHtml(lead.name)}</span>
-            <span class="text-xs text-gray-400 ml-2">(${lead.frequency})</span>
+      <div class="p-3 bg-white border border-gray-200 rounded-lg">
+        <div class="flex justify-between items-start mb-2">
+          <div class="flex-1">
+            <div class="flex items-center gap-2">
+              <span class="font-medium text-gray-700">${this.escapeHtml(lead.name)}</span>
+              <span class="text-xs text-gray-400">(${lead.frequency})</span>
+            </div>
+            <div class="text-xs text-gray-500 mt-1">
+              ${lead.goalType === 'stayUnder' ? '≤' : '≥'} ${lead.target} ${lead.unit || ''}
+            </div>
           </div>
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-medium ${progress >= 100 ? 'text-green-600' : 'text-gray-600'}">
-              ${lead.current || 0} / ${lead.target} ${lead.unit || ''}
-            </span>
+          <div class="flex items-center gap-1">
+            ${(lead.history?.length > 0) ? `
+              <button onclick="app.showLeadMeasureHistory('${goalId}', '${lead.id}')"
+                class="p-1 text-gray-400 hover:text-blue-600 transition text-xs" title="View History">
+                📊
+              </button>
+            ` : ''}
+            <button onclick="app.editLeadMeasure('${goalId}', '${lead.id}')"
+              class="p-1 text-gray-400 hover:text-violet-600 transition text-xs" title="Edit">
+              ✏️
+            </button>
+            <button onclick="app.deleteLeadMeasure('${goalId}', '${lead.id}')"
+              class="p-1 text-gray-400 hover:text-red-600 transition text-xs" title="Remove">
+              ×
+            </button>
           </div>
+        </div>
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-sm font-medium ${statusText}">
+            ${lead.current || 0} ${lead.unit || ''}
+          </span>
         </div>
         <div class="flex items-center gap-3">
           <div class="flex-1">
             <div class="w-full bg-gray-200 rounded-full h-2">
-              <div class="${progressColor} h-2 rounded-full transition-all" style="width: ${progress}%"></div>
+              <div class="${progressColor} h-2 rounded-full transition-all" style="width: ${Math.min(100, progress)}%"></div>
             </div>
           </div>
           <button onclick="app.showUpdateLeadMeasure('${goalId}', '${lead.id}')"
-            class="px-3 py-1 bg-blue-100 text-blue-700 rounded-lg text-sm hover:bg-blue-200 font-medium transition">
+            class="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700 font-medium transition whitespace-nowrap">
             Update
           </button>
-          <button onclick="app.deleteLeadMeasure('${goalId}', '${lead.id}')"
-            class="p-1 text-gray-400 hover:text-red-600 transition" title="Remove">×</button>
         </div>
       </div>
     `;
