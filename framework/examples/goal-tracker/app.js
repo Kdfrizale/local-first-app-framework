@@ -486,6 +486,10 @@ class GoalTrackerApp extends App {
     const frequencyLabel = lead.frequency === 'daily' ? 'today' : 
                           lead.frequency === 'weekly' ? 'this week' : 'this month';
     
+    // Get value for today's date from history, or default to 0
+    const todayEntry = lead.history?.find(h => h.date === today);
+    const todayValue = todayEntry ? todayEntry.value : 0;
+    
     modal.show({
       title: `📊 Update ${lead.name}`,
       content: `
@@ -498,14 +502,14 @@ class GoalTrackerApp extends App {
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">New Value *</label>
-            <input type="number" name="value" step="any" required value="${lead.current || 0}"
+            <input type="number" name="value" step="any" required value="${todayValue}"
               class="w-full px-3 py-2 border border-gray-300 rounded-lg text-lg font-medium">
             <p class="text-xs text-gray-500 mt-1">Enter the current value for ${frequencyLabel}</p>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Date</label>
             <input type="date" name="date" value="${today}"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg" onchange="app.updateLeadMeasureFormValue('${leadId}', this.value)">
           </div>
         </form>
       `,
@@ -579,6 +583,30 @@ class GoalTrackerApp extends App {
     this.saveData();
     
     this._showToast('Lead measure removed', 'info');
+  }
+
+  updateLeadMeasureFormValue(leadId, selectedDate) {
+    // Find the lead measure across all goals
+    let lead = null;
+    for (const goal of this.goals) {
+      const foundLead = goal.leadMeasures?.find(l => l.id === leadId);
+      if (foundLead) {
+        lead = foundLead;
+        break;
+      }
+    }
+    
+    if (!lead) return;
+    
+    // Get value for selected date from history, or default to 0
+    const dateEntry = lead.history?.find(h => h.date === selectedDate);
+    const dateValue = dateEntry ? dateEntry.value : 0;
+    
+    // Update the form input
+    const valueInput = document.querySelector('#lead-update-form input[name="value"]');
+    if (valueInput) {
+      valueInput.value = dateValue;
+    }
   }
 
   editLeadMeasure(goalId, leadId) {
@@ -824,6 +852,8 @@ class GoalTrackerApp extends App {
               ${goal.description ? `<p class="text-gray-600 mt-1">${this.escapeHtml(goal.description)}</p>` : ''}
             </div>
             <div class="flex gap-1 ml-4">
+              <button onclick="app.showChartDateFilter('${goal.id}')" 
+                class="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition" title="Filter chart date range">📅</button>
               <button onclick="app.editGoal('${goal.id}')" 
                 class="p-2 text-gray-400 hover:text-violet-600 hover:bg-violet-50 rounded transition" title="Edit">✏️</button>
               <button onclick="app.deleteGoal('${goal.id}')" 
@@ -907,22 +937,27 @@ class GoalTrackerApp extends App {
     const frequencyLabel = lead.frequency === 'daily' ? 'today' : 
                           lead.frequency === 'weekly' ? 'this week' : 'this month';
     
+    // Get today's value from history, or default to 0
+    const today = this.getTodayDate();
+    const todayEntry = lead.history?.find(h => h.date === today);
+    const todayValue = todayEntry ? todayEntry.value : 0;
+    
     // Calculate progress differently based on goal type
     let progress, progressColor, statusText;
     if (lead.goalType === 'stayUnder') {
-      // For "stay under" goals, success is being at or below target
-      if ((lead.current || 0) <= lead.target) {
-        progress = 100;
+      // For "stay under" goals, progress bar fills toward the limit
+      progress = (todayValue / lead.target) * 100;
+      // Color: green when at or below target, red when over
+      if (todayValue <= lead.target) {
         progressColor = 'bg-green-500';
         statusText = 'text-green-600';
       } else {
-        progress = ((lead.current || 0) / lead.target) * 100;
         progressColor = 'bg-red-500';
         statusText = 'text-red-600';
       }
     } else {
       // For "reach" goals, success is meeting or exceeding target
-      progress = Math.min(100, ((lead.current || 0) / lead.target) * 100);
+      progress = Math.min(100, (todayValue / lead.target) * 100);
       progressColor = progress >= 100 ? 'bg-green-500' : 'bg-blue-500';
       statusText = progress >= 100 ? 'text-green-600' : 'text-gray-600';
     }
@@ -958,7 +993,7 @@ class GoalTrackerApp extends App {
         </div>
         <div class="flex items-center gap-2 mb-2">
           <span class="text-sm font-medium ${statusText}">
-            ${lead.current || 0} ${lead.unit || ''}
+            ${todayValue} ${lead.unit || ''}
           </span>
         </div>
         <div class="flex items-center gap-3">
@@ -976,6 +1011,213 @@ class GoalTrackerApp extends App {
     `;
   }
 
+  showChartDateFilter(goalId) {
+    const goal = this.goals.find(g => g.id === goalId);
+    if (!goal) return;
+    
+    const currentFilter = goal.chartDateRange || { preset: 'last30days' };
+    const today = this.getTodayDate();
+    
+    modal.show({
+      title: '📊 Chart Date Range',
+      content: `
+        <form id="chart-filter-form" class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">Quick Presets</label>
+            <div class="grid grid-cols-2 gap-2">
+              <button type="button" data-preset="last7days" 
+                class="preset-btn px-4 py-2 border rounded-lg text-sm hover:bg-blue-50 transition ${currentFilter.preset === 'last7days' ? 'bg-blue-100 border-blue-500' : 'border-gray-300'}">
+                Last 7 days
+              </button>
+              <button type="button" data-preset="last30days" 
+                class="preset-btn px-4 py-2 border rounded-lg text-sm hover:bg-blue-50 transition ${currentFilter.preset === 'last30days' ? 'bg-blue-100 border-blue-500' : 'border-gray-300'}">
+                Last 30 days
+              </button>
+              <button type="button" data-preset="last90days" 
+                class="preset-btn px-4 py-2 border rounded-lg text-sm hover:bg-blue-50 transition ${currentFilter.preset === 'last90days' ? 'bg-blue-100 border-blue-500' : 'border-gray-300'}">
+                Last 90 days
+              </button>
+              <button type="button" data-preset="allTime" 
+                class="preset-btn px-4 py-2 border rounded-lg text-sm hover:bg-blue-50 transition ${currentFilter.preset === 'allTime' ? 'bg-blue-100 border-blue-500' : 'border-gray-300'}">
+                All time
+              </button>
+            </div>
+          </div>
+          
+          <div class="text-center text-gray-500 text-sm">or select custom range</div>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">From:</label>
+              <input type="date" name="customStart" 
+                value="${currentFilter.preset === 'custom' ? currentFilter.customStart || '' : ''}"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">To:</label>
+              <input type="date" name="customEnd" 
+                value="${currentFilter.preset === 'custom' ? currentFilter.customEnd || today : today}"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+            </div>
+          </div>
+          
+          <div class="p-3 bg-blue-50 rounded-lg text-sm">
+            <span class="font-medium">Current selection:</span> 
+            <span id="filter-preview">${this.getFilterLabel(currentFilter)}</span>
+          </div>
+        </form>
+      `,
+      buttons: [
+        { text: 'Cancel', onClick: () => modal.close() },
+        {
+          text: 'Apply',
+          primary: true,
+          onClick: () => {
+            const form = document.getElementById('chart-filter-form');
+            const activePreset = form.querySelector('.preset-btn.bg-blue-100');
+            const customStart = form.querySelector('input[name="customStart"]').value;
+            const customEnd = form.querySelector('input[name="customEnd"]').value;
+            
+            let filterConfig;
+            if (activePreset) {
+              filterConfig = {
+                preset: activePreset.dataset.preset,
+                customStart: null,
+                customEnd: null
+              };
+            } else if (customStart && customEnd) {
+              if (customEnd < customStart) {
+                this._showToast('End date must be after start date', 'error');
+                return;
+              }
+              filterConfig = {
+                preset: 'custom',
+                customStart,
+                customEnd
+              };
+            } else {
+              this._showToast('Please select a preset or enter both dates', 'error');
+              return;
+            }
+            
+            this.applyChartDateFilter(goalId, filterConfig);
+            modal.close();
+          }
+        }
+      ]
+    });
+    
+    // Add click handlers for preset buttons
+    setTimeout(() => {
+      const form = document.getElementById('chart-filter-form');
+      const presetBtns = form.querySelectorAll('.preset-btn');
+      const customInputs = form.querySelectorAll('input[type="date"]');
+      const preview = document.getElementById('filter-preview');
+      
+      presetBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          // Remove active class from all
+          presetBtns.forEach(b => {
+            b.classList.remove('bg-blue-100', 'border-blue-500');
+            b.classList.add('border-gray-300');
+          });
+          // Add to clicked
+          btn.classList.add('bg-blue-100', 'border-blue-500');
+          btn.classList.remove('border-gray-300');
+          
+          // Clear custom dates
+          customInputs.forEach(input => input.value = '');
+          
+          // Update preview
+          preview.textContent = this.getFilterLabel({ preset: btn.dataset.preset });
+        });
+      });
+      
+      customInputs.forEach(input => {
+        input.addEventListener('change', () => {
+          const start = form.querySelector('input[name="customStart"]').value;
+          const end = form.querySelector('input[name="customEnd"]').value;
+          
+          if (start && end) {
+            // Remove active preset
+            presetBtns.forEach(b => {
+              b.classList.remove('bg-blue-100', 'border-blue-500');
+              b.classList.add('border-gray-300');
+            });
+            
+            // Update preview
+            preview.textContent = `${start} to ${end}`;
+          }
+        });
+      });
+    }, 100);
+  }
+
+  getFilterLabel(filter) {
+    if (!filter || filter.preset === 'last30days') return 'Last 30 days';
+    if (filter.preset === 'last7days') return 'Last 7 days';
+    if (filter.preset === 'last90days') return 'Last 90 days';
+    if (filter.preset === 'allTime') return 'All time';
+    if (filter.preset === 'custom' && filter.customStart && filter.customEnd) {
+      return `${filter.customStart} to ${filter.customEnd}`;
+    }
+    return 'Last 30 days';
+  }
+
+  applyChartDateFilter(goalId, filterConfig) {
+    const goalIdx = this.goals.findIndex(g => g.id === goalId);
+    if (goalIdx === -1) return;
+    
+    this.goals[goalIdx].chartDateRange = filterConfig;
+    this.goals[goalIdx].updatedAt = new Date().toISOString();
+    
+    this.saveData();
+    this.renderChart(this.goals[goalIdx]);
+    
+    this._showToast('Chart filter applied!', 'success');
+  }
+
+  getChartDateRange(goal) {
+    const today = this.getTodayDate();
+    const filter = goal.chartDateRange || { preset: 'last30days' };
+    
+    // Collect all available dates from goal history
+    const allDates = new Set();
+    if (goal.lagMeasure?.history) {
+      goal.lagMeasure.history.forEach(h => allDates.add(h.date));
+    }
+    (goal.leadMeasures || []).forEach(lead => {
+      if (lead.history) lead.history.forEach(h => allDates.add(h.date));
+    });
+    
+    const sortedDates = Array.from(allDates).sort();
+    const earliestDate = sortedDates[0] || today;
+    
+    let startDate, endDate;
+    
+    if (filter.preset === 'allTime') {
+      startDate = earliestDate;
+      endDate = today;
+    } else if (filter.preset === 'custom') {
+      startDate = filter.customStart;
+      endDate = filter.customEnd;
+    } else {
+      // Preset: last7days, last30days, last90days
+      const days = filter.preset === 'last7days' ? 7 : 
+                   filter.preset === 'last90days' ? 90 : 30;
+      
+      const date = new Date();
+      date.setDate(date.getDate() - days);
+      const calculatedStart = date.toISOString().split('T')[0];
+      
+      // If earliest data is more recent than calculated start, use earliest
+      startDate = earliestDate > calculatedStart ? earliestDate : calculatedStart;
+      endDate = today;
+    }
+    
+    return { startDate, endDate };
+  }
+
   renderChart(goal) {
     const canvas = document.getElementById(`chart-${goal.id}`);
     if (!canvas) return;
@@ -984,6 +1226,9 @@ class GoalTrackerApp extends App {
     if (this.charts[goal.id]) {
       this.charts[goal.id].destroy();
     }
+    
+    // Get date range filter
+    const { startDate, endDate } = this.getChartDateRange(goal);
     
     // Collect all dates from lag and lead measures
     const allDates = new Set();
@@ -997,8 +1242,20 @@ class GoalTrackerApp extends App {
     
     if (allDates.size === 0) return;
     
-    // Sort dates
-    const labels = Array.from(allDates).sort();
+    // Sort dates and apply filter
+    const allLabels = Array.from(allDates).sort();
+    const labels = allLabels.filter(date => date >= startDate && date <= endDate);
+    
+    // If no data in filtered range, show message
+    if (labels.length === 0) {
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.font = '14px sans-serif';
+      ctx.fillStyle = '#9ca3af';
+      ctx.textAlign = 'center';
+      ctx.fillText('No data for selected date range', canvas.width / 2, canvas.height / 2);
+      return;
+    }
     
     // Build datasets
     const datasets = [];
@@ -1096,7 +1353,6 @@ class GoalTrackerApp extends App {
             display: true,
             position: 'bottom',
             labels: {
-              filter: (item) => !item.text.includes('Target'),
               usePointStyle: true,
               padding: 15
             }
